@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.specstory/
+
+# Local data symlinks / datasets (do not upload)
+dataset
+tsy_loho
+
+# Experiment outputs (do not upload)
+all_outputs/
+outputs/
+baseline_repro_newckpt_outputs/
+configs/outputs/
