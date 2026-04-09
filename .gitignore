@@ -11,8 +11,10 @@ __pycache__/
 dataset
 tsy_loho
 
-# Experiment outputs (do not upload)
-all_outputs/
-outputs/
-baseline_repro_newckpt_outputs/
-configs/outputs/
+# Experiment outputs
+# Keep most outputs for paper artifacts, but skip unused buckets.
+all_outputs/noCharts/
+all_outputs/logs/
+
+# Large model weights
+all_outputs/**/*.pth
