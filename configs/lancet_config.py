@@ -39,6 +39,7 @@ class Config:
     # - 多模态辅助监督 50 轮消融：bash run_loho_aux_50.sh（脚本内 export OPTIGENESIS_ENABLE_AUX=1、关闭 EMA、OUTPUT_DIR=aux_50_outputs）
     # - CORAL 域对齐 50 轮：bash run_loho_uda_50.sh（OPTIGENESIS_ENABLE_CORAL=1，输出 uda_50_outputs）
     # - ViT 对比：run_loho_vit_base.sh 等自行设置 OPTIGENESIS_BACKBONE 与 OPTIGENESIS_OUTPUT_DIR
+    # - 同一医院数据多次实验不同输出子目录：export OPTIGENESIS_OUTPUT_RUN_NAME=huaxi3（仍配合 HOSPITAL_NAME 选 CSV）
     OUTPUT_DIR = os.getenv(
         "OPTIGENESIS_OUTPUT_DIR",
         os.path.join(PROJECT_ROOT, "baseline_recheck_50_outputs"),

@@ -73,15 +73,19 @@ def main():
     # 2. 数据加载
     # 动态获取当前医院名称对应的 CSV 文件名
     hospital_name = Config.HOSPITAL_NAME.lower()
+    run_folder = os.getenv("OPTIGENESIS_OUTPUT_RUN_NAME", "").strip().lower()
+    if not run_folder or os.path.sep in run_folder or ".." in run_folder:
+        run_folder = hospital_name
     train_csv = os.path.join(Config.DATA_ROOT, f"development_{hospital_name}.csv")
     val_csv = os.path.join(Config.DATA_ROOT, f"external_{hospital_name}.csv")
-    run_output_dir = os.path.join(Config.OUTPUT_DIR, hospital_name)
+    run_output_dir = os.path.join(Config.OUTPUT_DIR, run_folder)
     checkpoints_dir = os.path.join(run_output_dir, "checkpoints")
     logs_dir = os.path.join(run_output_dir, "logs")
     os.makedirs(checkpoints_dir, exist_ok=True)
     os.makedirs(logs_dir, exist_ok=True)
     
     print(f"【数据目录】{Config.DATA_ROOT}")
+    print(f"【输出目录】{run_output_dir}")
     print(f"【当前医院】{Config.HOSPITAL_NAME}  （开发集: {train_csv}  |  外部集: {val_csv}）")
     
     try:
