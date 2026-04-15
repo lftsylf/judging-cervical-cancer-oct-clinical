@@ -15,7 +15,7 @@ from sklearn.metrics import (
     cohen_kappa_score,
     matthews_corrcoef
 )
-from training.losses import evidence_loss, focal_loss_with_edl, coral_loss
+from training.losses import evidence_loss, focal_loss_with_edl, coral_loss, wma_loss
 import numpy as np
 from collections import defaultdict
 from itertools import cycle
@@ -29,6 +29,12 @@ def train_epoch(
     total_epochs,
     class_weights=None,
     use_focal=False,
+    use_wma=False,
+    train_class_counts=None,
+    wma_c=0.2,
+    wma_warmup_epochs=10,
+    wma_temperature=1.0,
+    kl_annealing_epochs=10,
     enable_multimodal_aux=False,
     aux_w_vision=0.2,
     aux_w_clinical=0.2,
@@ -77,7 +83,19 @@ def train_epoch(
             feat_s, feat_t = None, None
         
         # Loss - 根据参数选择损失函数
-        if use_focal:
+        if use_wma:
+            loss = wma_loss(
+                alpha,
+                y_onehot,
+                epoch,
+                num_classes=2,
+                n_counts=train_class_counts,
+                c_margin=wma_c,
+                warmup_epochs=wma_warmup_epochs,
+                temperature=wma_temperature,
+                kl_annealing_epochs=kl_annealing_epochs,
+            )
+        elif use_focal:
             loss = focal_loss_with_edl(alpha, y_onehot, epoch, total_epochs, class_weights=class_weights)
         else:
             loss = evidence_loss(alpha, y_onehot, epoch, total_epochs, class_weights=class_weights)
@@ -112,6 +130,12 @@ def validate(
     device,
     verbose=True,
     use_focal=False,
+    use_wma=False,
+    train_class_counts=None,
+    wma_c=0.2,
+    wma_warmup_epochs=10,
+    wma_temperature=1.0,
+    kl_annealing_epochs=10,
     class_weights=None,
     epoch=0,
     total_epochs=50,
@@ -139,7 +163,19 @@ def validate(
             
             # 计算损失（用于验证集的平均损失）
             y_onehot = F.one_hot(labels, num_classes=2).float()
-            if use_focal:
+            if use_wma:
+                loss = wma_loss(
+                    alpha,
+                    y_onehot,
+                    epoch,
+                    num_classes=2,
+                    n_counts=train_class_counts,
+                    c_margin=wma_c,
+                    warmup_epochs=wma_warmup_epochs,
+                    temperature=wma_temperature,
+                    kl_annealing_epochs=kl_annealing_epochs,
+                )
+            elif use_focal:
                 from training.losses import focal_loss_with_edl
                 loss = focal_loss_with_edl(alpha, y_onehot, epoch, total_epochs, class_weights=class_weights)
             else:

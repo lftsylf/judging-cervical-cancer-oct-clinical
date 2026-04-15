@@ -3,6 +3,7 @@ import sys
 import torch
 import torch.optim as optim
 import pandas as pd
+import random
 
 
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
@@ -21,6 +22,24 @@ from training.ema import ModelEMA
 import numpy as np
 
 
+def seed_everything(seed: int):
+    """Lock all major randomness sources for reproducible training."""
+    seed = int(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+    random.seed(seed)
+    np.random.seed(seed)
+
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True, warn_only=True)
+
+
 def export_split_predictions(
     model,
     loader,
@@ -31,6 +50,12 @@ def export_split_predictions(
     device,
     use_focal_loss,
     class_weights,
+    use_wma=False,
+    train_class_counts=None,
+    wma_c=0.2,
+    wma_warmup_epochs=10,
+    wma_temperature=1.0,
+    kl_annealing_epochs=10,
 ):
     metrics, pred_details = validate(
         model,
@@ -38,6 +63,12 @@ def export_split_predictions(
         device,
         verbose=False,
         use_focal=use_focal_loss,
+        use_wma=use_wma,
+        train_class_counts=train_class_counts,
+        wma_c=wma_c,
+        wma_warmup_epochs=wma_warmup_epochs,
+        wma_temperature=wma_temperature,
+        kl_annealing_epochs=kl_annealing_epochs,
         class_weights=class_weights,
         epoch=Config.EPOCHS - 1,
         total_epochs=Config.EPOCHS,
@@ -66,6 +97,9 @@ def export_split_predictions(
 
 
 def main():
+    seed_everything(Config.SEED)
+    print(f"【随机种子】SEED={Config.SEED}（已锁定 Python/Numpy/PyTorch/cudnn）")
+
     # 1. 初始化
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"【项目】OptiGenesis (Lancet)  |  【设备】{device}")
@@ -93,8 +127,11 @@ def main():
             print("⚠️ 未找到对应 CSV，请先运行 data/prepare_loho_data.py 生成 development_*.csv 与 external_*.csv")
             # 为简单起见，这里假设用户已经正确配置了 Config 并且运行了 LOHO 数据预处理
             
-        train_loader = get_dataloader(train_csv, mode='train')
-        val_loader = get_dataloader(val_csv, mode='val')
+        # DataLoader 使用固定 seed + worker_init_fn，确保多进程增强与采样可复现
+        train_loader = get_dataloader(train_csv, mode='train', seed=Config.SEED)
+        val_loader = get_dataloader(val_csv, mode='val', seed=Config.SEED + 1000)
+        train_labels = np.asarray(getattr(train_loader.dataset, "labels", []), dtype=np.int64)
+        train_class_counts = np.bincount(train_labels, minlength=2).tolist()
         enable_coral = getattr(Config, "ENABLE_DOMAIN_CORAL", False)
         # CORAL 目标域与验证同一 CSV；复用 val_loader，避免再占一份 DataLoader/显存
         uda_target_loader = val_loader if enable_coral else None
@@ -134,10 +171,25 @@ def main():
     best_auc = 0.0
     best_f1 = 0.0
     best_mcc = -1.0
+    early_stop_patience = 10
+    epochs_without_improve = 0
     metrics_history = []
-    
+
+    use_wma = bool(getattr(Config, "USE_WMA_LOSS", False))
+    use_focal_loss = not use_wma
+    wma_c = float(getattr(Config, "WMA_C", 0.2))
+    wma_warmup = int(getattr(Config, "WMA_WARMUP_EPOCHS", 10))
+    wma_temp = float(getattr(Config, "WMA_TEMPERATURE", 1.0))
+    kl_ann = int(getattr(Config, "KL_ANNEALING_EPOCHS", 10))
+
     print("【开始训练】…")
-    print(" 使用 Focal Loss + 类别权重 + 过采样策略处理类别不平衡")
+    if use_wma:
+        print(
+            f" 主损失: WMA Loss（C={wma_c}, warmup={wma_warmup}, τ={wma_temp}）"
+            f"  |  N_P=[neg,pos]={train_class_counts}"
+        )
+    else:
+        print(" 主损失: Focal + EDL 组合（含类别权重）；数据侧仍配合过采样")
     print(f" 多模态辅助监督: {getattr(Config, 'ENABLE_MULTIMODAL_AUX_LOSS', False)}")
     if getattr(Config, "ENABLE_DOMAIN_CORAL", False):
         print(
@@ -151,10 +203,7 @@ def main():
         print(f" Model EMA: 开启 (decay={ema_decay})，验证/存盘/导出均使用 EMA 权重")
     else:
         print(" Model EMA: 关闭")
-    
-    # 使用 Focal Loss 来处理极度不平衡的数据
-    use_focal_loss = True
-    
+
     for epoch in range(Config.EPOCHS):
         # Train
         train_loss = train_epoch(
@@ -166,6 +215,12 @@ def main():
             Config.EPOCHS,
             class_weights=class_weights,
             use_focal=use_focal_loss,
+            use_wma=use_wma,
+            train_class_counts=train_class_counts,
+            wma_c=wma_c,
+            wma_warmup_epochs=wma_warmup,
+            wma_temperature=wma_temp,
+            kl_annealing_epochs=kl_ann,
             enable_multimodal_aux=getattr(Config, 'ENABLE_MULTIMODAL_AUX_LOSS', False),
             aux_w_vision=getattr(Config, 'AUX_LOSS_WEIGHT_VISION', 0.2),
             aux_w_clinical=getattr(Config, 'AUX_LOSS_WEIGHT_CLINICAL', 0.2),
@@ -189,6 +244,12 @@ def main():
                 device,
                 verbose=(epoch % 10 == 0 or epoch == Config.EPOCHS - 1),
                 use_focal=use_focal_loss,
+                use_wma=use_wma,
+                train_class_counts=train_class_counts,
+                wma_c=wma_c,
+                wma_warmup_epochs=wma_warmup,
+                wma_temperature=wma_temp,
+                kl_annealing_epochs=kl_ann,
                 class_weights=class_weights,
                 epoch=epoch,
                 total_epochs=Config.EPOCHS,
@@ -199,6 +260,12 @@ def main():
                 device,
                 verbose=False,
                 use_focal=use_focal_loss,
+                use_wma=use_wma,
+                train_class_counts=train_class_counts,
+                wma_c=wma_c,
+                wma_warmup_epochs=wma_warmup,
+                wma_temperature=wma_temp,
+                kl_annealing_epochs=kl_ann,
                 class_weights=class_weights,
                 epoch=epoch,
                 total_epochs=Config.EPOCHS,
@@ -234,6 +301,7 @@ def main():
         save_path = os.path.join(checkpoints_dir, "best_model.pth")
         if val_metrics['auc_roc'] > best_auc:
             best_auc = val_metrics['auc_roc']
+            epochs_without_improve = 0
             if ema is not None:
                 ema.apply_shadow(model)
                 try:
@@ -244,6 +312,12 @@ def main():
                 torch.save(model.state_dict(), save_path)
             print(f"    新的最佳ROC-AUC模型! (AUC: {best_auc:.4f})")
             print(f"   💾 模型已保存至: {save_path}")
+        else:
+            epochs_without_improve += 1
+            print(
+                f"   ⏳ EarlyStopping 计数: {epochs_without_improve}/{early_stop_patience} "
+                f"(当前最佳 AUC={best_auc:.4f})"
+            )
         # 以下仅作训练过程记录，不触发保存
         if val_metrics['f1_positive'] > best_f1:
             best_f1 = val_metrics['f1_positive']
@@ -257,6 +331,13 @@ def main():
             print(f"      准确率: {train_metrics['accuracy']:.4f} | 平衡准确率: {train_metrics['balanced_accuracy']:.4f}")
             print(f"      ROC-AUC: {train_metrics['auc_roc']:.4f} | PR-AUC: {train_metrics['auc_pr']:.4f}")
             print(f"      F1(宏平均): {train_metrics['f1_score']:.4f} | MCC: {train_metrics['mcc']:.4f}")
+
+        if epochs_without_improve >= early_stop_patience:
+            print(
+                f"\n🛑 Early Stopping 触发：验证集 ROC-AUC 连续 "
+                f"{early_stop_patience} 个 epoch 未提升，提前结束训练。"
+            )
+            break
 
     # 加载最佳权重，导出 development / external 逐样本概率（供阈值与曲线分析）
     save_path = os.path.join(checkpoints_dir, "best_model.pth")
@@ -272,6 +353,12 @@ def main():
             device=device,
             use_focal_loss=use_focal_loss,
             class_weights=class_weights,
+            use_wma=use_wma,
+            train_class_counts=train_class_counts,
+            wma_c=wma_c,
+            wma_warmup_epochs=wma_warmup,
+            wma_temperature=wma_temp,
+            kl_annealing_epochs=kl_ann,
         )
         _, val_metrics_best = export_split_predictions(
             model=model,
@@ -283,6 +370,12 @@ def main():
             device=device,
             use_focal_loss=use_focal_loss,
             class_weights=class_weights,
+            use_wma=use_wma,
+            train_class_counts=train_class_counts,
+            wma_c=wma_c,
+            wma_warmup_epochs=wma_warmup,
+            wma_temperature=wma_temp,
+            kl_annealing_epochs=kl_ann,
         )
 
         print(

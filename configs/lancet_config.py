@@ -45,7 +45,7 @@ class Config:
         os.path.join(PROJECT_ROOT, "baseline_recheck_50_outputs"),
     )
     
-    # --- 2. 多中心设置 (9家医院) ---
+    # --- 2. 多中心设置 (9家医院) 现在不用，只有三家医院---
     # 训练集 (湖北5家)
     TRAIN_CENTERS = [
         "Hubei_Xiangyang", "Hubei_Enshi", "Hubei_Wuda", "Hubei_Jingzhou", "Hubei_Shiyan"
@@ -77,10 +77,12 @@ class Config:
     NUM_CLASSES = 2         # 二分类: < CIN2 (阴性) vs >= CIN2 (阳性)
     
     # --- 5. 训练超参 ---
-    EPOCHS = 50  # 与 baseline 完整消融一致（如 baseline_outputs 50 epoch）
+    # 允许通过环境变量覆盖，便于批量脚本循环调用（例如 T0 设为 30）
+    EPOCHS = _env_int("OPTIGENESIS_EPOCHS", 50)
     LR = 5e-5
     WEIGHT_DECAY = 1e-4
-    SEED = 42
+    # 允许通过环境变量覆盖，便于多 seed 复现实验
+    SEED = _env_int("OPTIGENESIS_SEED", 42)
     # ⚠️ 注意：数据加载器已启用 WeightedRandomSampler (过采样)，保证了Batch内正负样本约 1:1。
     # 因此这里不需要设置极端的反比权重 (如 5.38)，否则会导致“双重加权”，模型全猜阳性。
     # 只需微调 (1.2~1.5) 以稍微偏向 Recall 即可。
@@ -94,6 +96,12 @@ class Config:
     # --- 6. 不确定性 Loss 配置 ---
     # KL散度退火周期：前10个epoch主要学准确率，后面慢慢加不确定性约束
     KL_ANNEALING_EPOCHS = 10
+
+    # WMA Loss（重加权边距调整的证据不确定性感知损失）；baseline 脚本请 export OPTIGENESIS_USE_WMA=0
+    USE_WMA_LOSS = _env_bool("OPTIGENESIS_USE_WMA", True)
+    WMA_C = _env_float("OPTIGENESIS_WMA_C", 0.2)
+    WMA_WARMUP_EPOCHS = _env_int("OPTIGENESIS_WMA_WARMUP", 10)
+    WMA_TEMPERATURE = _env_float("OPTIGENESIS_WMA_TEMP", 1.0)
 
     # --- 7. 多模态辅助监督（低成本创新点，可开关）---
     # 思路：融合分支之外，给视觉分支和临床分支各加一个轻量辅助分类头，

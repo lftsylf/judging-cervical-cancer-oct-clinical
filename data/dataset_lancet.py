@@ -134,7 +134,7 @@ class LancetMultiCenterDataset(Dataset):
         
         return images_tensor, clinical_vec, label
 
-def get_dataloader(csv_path, mode='train'):
+def get_dataloader(csv_path, mode='train', seed=None):
     """
     数据加载器配置
     
@@ -214,13 +214,27 @@ def get_dataloader(csv_path, mode='train'):
             shuffle = False # 使用 sampler 时必须设为 False
             print(f"🔥 [Data] 已启用加权采样 (Neg:{class_counts[0]}, Pos:{class_counts[1]})")
             
+    worker_init_fn = None
+    generator = None
+    if seed is not None:
+        def _seed_worker(worker_id):
+            worker_seed = int(seed) + int(worker_id)
+            np.random.seed(worker_seed)
+            random.seed(worker_seed)
+            torch.manual_seed(worker_seed)
+        worker_init_fn = _seed_worker
+        generator = torch.Generator()
+        generator.manual_seed(int(seed))
+
     loader = DataLoader(
         dataset, 
         batch_size=Config.BATCH_SIZE, 
         shuffle=shuffle, 
         sampler=sampler,
         num_workers=Config.NUM_WORKERS,
-        pin_memory=True
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
+        generator=generator,
     )
     
     return loader
