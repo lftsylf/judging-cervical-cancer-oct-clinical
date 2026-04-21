@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# ViT-Base T0 对比：标准多模态（Focal+EDL），关闭 WMA / EMA / AUX / CORAL。
+# 3 折 × 5 seeds，30 epoch，batch=2。输出根目录：outputs_comparison_vit_base/
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$PROJECT_ROOT"
+
+HOSPITALS=(huaxi liaoning xiangya)
+SEEDS=(42 123 2024 3407 114514)
+MAX_EPOCHS=30
+
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:128}"
+
+unset OPTIGENESIS_ENABLE_AUX
+unset OPTIGENESIS_ENABLE_EMA
+unset OPTIGENESIS_ENABLE_CORAL
+unset OPTIGENESIS_OUTPUT_DIR
+unset OPTIGENESIS_OUTPUT_RUN_NAME
+unset OPTIGENESIS_BATCH_SIZE
+unset OPTIGENESIS_CORAL_LAMBDA
+unset OPTIGENESIS_CORAL_WARMUP
+unset OPTIGENESIS_EPOCHS
+unset OPTIGENESIS_SEED
+unset OPTIGENESIS_USE_WMA
+unset OPTIGENESIS_BACKBONE
+unset HOSPITAL_NAME
+
+export OPTIGENESIS_BACKBONE="vit_base_patch16_224"
+export OPTIGENESIS_ENABLE_AUX=0
+export OPTIGENESIS_ENABLE_EMA=0
+export OPTIGENESIS_ENABLE_CORAL=0
+export OPTIGENESIS_BATCH_SIZE=2
+export OPTIGENESIS_USE_WMA=0
+
+echo "======================================"
+echo "T0 ViT-Base 对比 | backbone=${OPTIGENESIS_BACKBONE}"
+echo "Hospitals: ${HOSPITALS[*]} | Seeds: ${SEEDS[*]} | epochs=${MAX_EPOCHS} | batch=${OPTIGENESIS_BATCH_SIZE}"
+echo "WMA=0 EMA=0 AUX=0 CORAL=0"
+echo "输出根: ${PROJECT_ROOT}/outputs_comparison_vit_base"
+echo "======================================"
+
+echo "1) 绑定 dataset -> tsy_loho"
+./run_experiment.sh "$PROJECT_ROOT/tsy_loho"
+
+echo "2) 生成 LOHO development/external CSV"
+python data/prepare_loho_data.py
+
+for HOSP in "${HOSPITALS[@]}"; do
+  for SEED in "${SEEDS[@]}"; do
+    echo "--------------------------------------"
+    echo "ViT-Base | ${HOSP} | seed=${SEED}"
+    echo "--------------------------------------"
+
+    export HOSPITAL_NAME="$HOSP"
+    export OPTIGENESIS_SEED="$SEED"
+    export OPTIGENESIS_EPOCHS="$MAX_EPOCHS"
+    export OPTIGENESIS_OUTPUT_DIR="$PROJECT_ROOT/outputs_comparison_vit_base/$HOSP"
+    export OPTIGENESIS_OUTPUT_RUN_NAME="seed_${SEED}"
+
+    LOG_DIR="$OPTIGENESIS_OUTPUT_DIR/$OPTIGENESIS_OUTPUT_RUN_NAME/logs"
+    mkdir -p "$LOG_DIR"
+    RUN_LOG="$LOG_DIR/train_console.log"
+
+    python main.py 2>&1 | tee "$RUN_LOG"
+  done
+done
+
+echo "======================================"
+echo "ViT-Base 对比全部完成: ${PROJECT_ROOT}/outputs_comparison_vit_base"
+echo "======================================"

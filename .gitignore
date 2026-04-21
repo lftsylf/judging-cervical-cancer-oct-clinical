@@ -18,3 +18,10 @@ all_outputs/logs/
 
 # Large model weights
 all_outputs/**/*.pth
+outputs/**/checkpoints/*.pth
+
+# Large/temporary experiment bundles
+all_outputs_period_one/
+
+# Keep output metrics/artifacts, skip raw runtime logs
+outputs/**/*.log

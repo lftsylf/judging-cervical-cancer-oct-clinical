@@ -72,7 +72,8 @@ class Config:
     MODEL_NAME = "OptiGenesis_v1"
     # 默认 Swin；ViT 对比可设置环境变量 OPTIGENESIS_BACKBONE=vit_small_patch16_224 等
     BACKBONE = os.getenv("OPTIGENESIS_BACKBONE", "swin_tiny_patch4_window7_224")
-    USE_CLINICAL = True     # 开启多模态融合
+    # 临床多模态融合；批量脚本可 export OPTIGENESIS_USE_CLINICAL=1/0
+    USE_CLINICAL = _env_bool("OPTIGENESIS_USE_CLINICAL", True)
     USE_UNCERTAINTY = True  # 开启不确定性估计 (Lancet核心亮点)
     NUM_CLASSES = 2         # 二分类: < CIN2 (阴性) vs >= CIN2 (阳性)
     

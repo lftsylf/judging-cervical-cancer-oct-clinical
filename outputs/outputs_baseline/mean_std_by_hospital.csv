@@ -1,0 +1,4 @@
+hospital,n_seeds,best_epoch_mean,best_epoch_std,trained_epochs_mean,trained_epochs_std,dev_auc_mean,dev_auc_std,dev_pr_auc_mean,dev_pr_auc_std,dev_bal_acc_mean,dev_bal_acc_std,ext_auc_mean,ext_auc_std,ext_pr_auc_mean,ext_pr_auc_std,ext_bal_acc_mean,ext_bal_acc_std,best_model_auc_mean,best_model_auc_std,max_f1_positive_mean,max_f1_positive_std,max_mcc_mean,max_mcc_std
+huaxi,5,7.4000,3.9115,17.4000,3.9115,0.8244,0.0391,0.8256,0.0692,0.7354,0.0411,0.5737,0.0154,0.4397,0.0368,0.4916,0.0187,0.5737,0.0154,0.5451,0.0028,0.1150,0.0182
+liaoning,5,11.0000,5.3852,21.0000,5.3852,0.8255,0.0697,0.8468,0.0543,0.7117,0.0881,0.5872,0.0074,0.4618,0.0180,0.5683,0.0094,0.5872,0.0074,0.5230,0.0040,0.1549,0.0206
+xiangya,5,8.4000,7.8613,18.2000,7.4632,0.6817,0.1220,0.6767,0.1325,0.6019,0.1208,0.6050,0.0372,0.7956,0.0208,0.5175,0.0503,0.6050,0.0372,0.8171,0.0000,0.1406,0.0979
