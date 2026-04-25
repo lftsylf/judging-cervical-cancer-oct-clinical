@@ -19,6 +19,7 @@ Challengers:
 
 from __future__ import annotations
 
+import argparse
 import math
 import os
 from dataclasses import dataclass
@@ -33,6 +34,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 PREFERRED_SEED = "2024"
 SUPPORTED_SEEDS = ("42", "123", "2024", "3407", "114514")
+# 优先 2024，再 42 / 114514 等（与论文主设定一致）
+SEED_TRY_ORDER = ("2024", "42", "123", "3407", "114514")
 
 CHAMPION_PATH = os.path.join(
     PROJECT_ROOT,
@@ -51,6 +54,14 @@ MODEL_ROOT_CANDIDATES: Dict[str, Sequence[str]] = {
     ),
     "outputs_comparison_vit_small": (
         os.path.join(PROJECT_ROOT, "outputs", "对比试验", "outputs_comparison_vit_small"),
+    ),
+    "outputs_comparison_convnext_small": (
+        os.path.join(PROJECT_ROOT, "outputs_comparison_convnext_small"),
+        os.path.join(PROJECT_ROOT, "outputs", "对比试验", "outputs_comparison_convnext_small"),
+    ),
+    "outputs_comparison_swin_small": (
+        os.path.join(PROJECT_ROOT, "outputs_comparison_swin_small"),
+        os.path.join(PROJECT_ROOT, "outputs", "对比试验", "outputs_comparison_swin_small"),
     ),
     "outputs_baseline": (
         os.path.join(PROJECT_ROOT, "outputs", "outputs_baseline"),
@@ -73,6 +84,8 @@ MODEL_ROOT_CANDIDATES: Dict[str, Sequence[str]] = {
 TABLE_1_MODELS: List[Tuple[str, str]] = [
     ("outputs_comparison_vit_base", "ViT-Base"),
     ("outputs_comparison_vit_small", "ViT-Small"),
+    ("outputs_comparison_convnext_small", "ConvNeXt-Small"),
+    ("outputs_comparison_swin_small", "Swin-Small"),
 ]
 
 TABLE_2_MODELS: List[Tuple[str, str]] = [
@@ -185,10 +198,44 @@ def _pick_common_seed(champion_seed: str, challenger_root: str) -> str:
         return champion_seed
     if not challenger_seeds:
         raise FileNotFoundError(f"No Xiangya seed CSV found in {challenger_root}")
+    for seed in SEED_TRY_ORDER:
+        if seed in challenger_seeds:
+            return seed
     for seed in SUPPORTED_SEEDS:
         if seed in challenger_seeds:
             return seed
     return sorted(challenger_seeds)[0]
+
+
+def _resolve_champion_xiangya_csv() -> Tuple[str, str]:
+    """优先 seed_2024，不存在则按 SEED_TRY_ORDER 回退。"""
+    base = os.path.join(PROJECT_ROOT, "outputs", "消融实验", "outputs_wma_ema_aux", "xiangya")
+    for seed in SEED_TRY_ORDER:
+        path = os.path.join(base, f"seed_{seed}", "logs", "external_sample_predictions.csv")
+        if os.path.isfile(path):
+            return seed, path
+    raise FileNotFoundError(
+        f"Champion CSV not found under {base} for seeds {SEED_TRY_ORDER}"
+    )
+
+
+def run_sota_convnext_swin_delong_only() -> None:
+    """仅输出 OptiGenesis vs ConvNeXt-Small / Swin-Small 两行 DeLong（xiangya，oct_id 内连接）。"""
+    champion_seed, champion_path = _resolve_champion_xiangya_csv()
+    champion_df = _read_prediction_csv(champion_path)
+
+    pairs: List[Tuple[str, str]] = [
+        ("outputs_comparison_convnext_small", "ConvNeXt-Small"),
+        ("outputs_comparison_swin_small", "Swin-Small"),
+    ]
+    for model_key, display_name in pairs:
+        challenger = _load_challenger_data(model_key, display_name, champion_seed=champion_seed)
+        y_true, s_champion, s_challenger, _label_mismatch = _align_on_oct_id(
+            champion_df=champion_df,
+            challenger_df=challenger.df,
+        )
+        p, _auc_champion, _auc_challenger = delong_pvalue(y_true, s_champion, s_challenger)
+        print(f"OptiGenesis vs {display_name}: p = {_format_p(p)}")
 
 
 def _read_prediction_csv(path: str) -> pd.DataFrame:
@@ -263,6 +310,18 @@ def _print_section(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="DeLong tests (Xiangya external ROC-AUC).")
+    parser.add_argument(
+        "--sota-convnext-swin-only",
+        action="store_true",
+        help="Only print OptiGenesis vs ConvNeXt-Small and vs Swin-Small (strict oct_id inner join).",
+    )
+    args = parser.parse_args()
+
+    if args.sota_convnext_swin_only:
+        run_sota_convnext_swin_delong_only()
+        return
+
     if not os.path.isfile(CHAMPION_PATH):
         raise FileNotFoundError(f"Champion CSV not found: {CHAMPION_PATH}")
 
