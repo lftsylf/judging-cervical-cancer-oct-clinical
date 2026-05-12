@@ -1,0 +1,23 @@
+% table1 对比实验表格（mean ± std）
+% 需要宏包: \usepackage{booktabs, multirow, array, xcolor, colortbl}
+\begin{table*}[t]
+\centering
+\caption{\textbf{Table 1. Global performance comparison between MUSE and SOTA models.} All models utilize \textbf{OCT + Text (O+T)} modality. Internal performance reflects the development phase, while External metrics denote macro-averages across three unseen centers (LOCO). $p$-values evaluate External AUC vs. MUSE. Values are reported as mean $\pm$ standard deviation across five seeds.}
+\label{tab:sota_compact}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{l c c c c c c | c}
+\toprule
+\multirow{2}{*}{\textbf{Model Variant}} & \multirow{2}{*}{\textbf{Params}} & \multicolumn{2}{c}{\textbf{Internal Validation (Dev)}} & \multicolumn{2}{c}{\textbf{External Test (LOCO)}} & \multirow{2}{*}{\textbf{Gap $\downarrow$}} & \multirow{2}{*}{\textbf{$p$-value}} \
+\cmidrule(lr){3-4} \cmidrule(lr){5-6}
+& & AUC & Sens & AUC & Sens & & \
+\midrule
+ViT-Base* & 86.0M & 0.62\pm0.05 & 0.56\pm0.03 & 0.57\pm0.03 & 0.56\pm0.10 & 8.4\% & 0.044 \\
+ViT-Small* & 21.8M & 0.72\pm0.02 & 0.64\pm0.08 & 0.59\pm0.03 & 0.54\pm0.11 & 17.2\% & 0.047 \\
+ConvNeXt-S & 49.7M & 0.63\pm0.04 & 0.54\pm0.07 & 0.58\pm0.04 & 0.55\pm0.07 & 7.0\% & 0.090 \\
+Swin-Small & 49.1M & 0.74\pm0.05 & 0.59\pm0.14 & \textbf{0.60\pm0.03} & 0.48\pm0.08 & 19.6\% & 0.116 \\
+Baseline* & 27.7M & \textbf{0.78\pm0.06} & \textbf{0.70\pm0.06} & 0.59\pm0.01 & 0.59\pm0.12 & 24.2\% & 0.003 \\
+\midrule
+\rowcolor{gray!15} \textbf{MUSE (Ours)} & \textbf{27.7M} & 0.63\pm0.06 & 0.50\pm0.13 & 0.60\pm0.04 & \textbf{0.61\pm0.08} & \textbf{4.9\%} & \textbf{Ref.} \\
+\bottomrule
+\end{tabular}}
+\end{table*}

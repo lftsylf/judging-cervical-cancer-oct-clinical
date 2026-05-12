@@ -1,0 +1,6 @@
+﻿Model,Backbone,Params (exact),Params (M),Trainable Params (M)
+ViT-Base,vit_base_patch16_224,86017030,86.0M,86.0M
+ViT-Small,vit_small_patch16_224,21784966,21.8M,21.8M
+ConvNeXt-Small,convnext_small,49673062,49.7M,49.7M
+Swin-Small,swin_small_patch4_window7_224,49055632,49.1M,49.1M
+OptiGenesis Full,swin_tiny_patch4_window7_224,27737728,27.7M,27.7M

@@ -1,0 +1,18 @@
+\begin{table}[t]
+\centering
+\caption{Patient Demographics and Dataset Characteristics across Centers.}
+\label{tab:patient_demographics}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lcccc}
+\hline
+Center (Real Site) & Total Patients & Positive Cases (\%) & Age (years, mean $\pm$ SD) & Imaging / Acquisition Characteristics \\
+\hline
+Center A (Huaxi) & 87 & 32 (36.8\%) & 40.1 $\pm$ 9.3 & In-hospital acquisition; relatively standardized records; low metadata missingness \\
+Center B (Liaoning) & 196 & 69 (35.2\%) & 43.7 $\pm$ 9.8 & In-hospital acquisition; broad screening population with stable metadata quality \\
+Center C (Xiangya) & 97 & 67 (69.1\%) & 49.6 $\pm$ 18.0$^\dagger$ & High heterogeneity; frequent cross-hospital records (\textasciitilde49.5\% tagged as external) and more acquisition/domain artifacts \\
+\hline
+\end{tabular}
+\vspace{2mm}
+
+\footnotesize{$^\dagger$Age completeness in Center C is limited in the current CSV metadata (14/97 non-missing), so age statistics should be interpreted cautiously.}
+\end{table}

@@ -1,0 +1,5 @@
+﻿Champion,Challenger,Seed used,n (oct_id overlap),OptiGenesis AUC,Challenger AUC,p-value,p-value (formatted),Significant (p<0.05),y_true mismatch count
+OptiGenesis Full,ViT-Base,2024,97,0.6542,0.4816,0.0442629983591106,0.044263,Yes,40
+OptiGenesis Full,ViT-Small,2024,97,0.6542,0.4891,0.04700869854765021,0.047009,Yes,38
+OptiGenesis Full,ConvNeXt-Small,2024,97,0.6542,0.5095,0.09026513541702878,0.090265,No,40
+OptiGenesis Full,Swin-Small,2024,97,0.6542,0.5308,0.11573704738913214,0.115737,No,36

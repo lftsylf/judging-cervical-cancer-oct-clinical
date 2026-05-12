@@ -1,0 +1,4 @@
+center,n_total,n_positive,positive_rate_percent,age_mean,age_std,age_non_missing_n,age_missing_n,age_missing_rate_percent
+HuaXi,87,32,36.78,40.11,9.34,87,0,0.0
+LiaoNing,196,69,35.2,43.72,9.77,194,2,1.02
+XiangYa,97,67,69.07,49.57,17.96,14,83,85.57
