@@ -1,0 +1,5 @@
+1. center=xiangya oct_id=M0008_2021_P0001596 true_label=1 prob=0.6095 guessed_tiff=M0008_2021_P0001596.tiff image_folder=loho_5centers/fold_03_external_XiangYa/external_octData/XiangYa/M0008_2021_P0001596
+2. center=xiangya oct_id=M0008_2021_P0001859 true_label=1 prob=0.6136 guessed_tiff=M0008_2021_P0001859.tiff image_folder=loho_5centers/fold_03_external_XiangYa/external_octData/XiangYa/M0008_2021_P0001859
+3. center=xiangya oct_id=M0008_2021_P0001778 true_label=1 prob=0.6142 guessed_tiff=M0008_2021_P0001778.tiff image_folder=loho_5centers/fold_03_external_XiangYa/external_octData/XiangYa/M0008_2021_P0001778
+4. center=xiangya oct_id=M0008_2021_P0001872 true_label=1 prob=0.6161 guessed_tiff=M0008_2021_P0001872.tiff image_folder=loho_5centers/fold_03_external_XiangYa/external_octData/XiangYa/M0008_2021_P0001872
+5. center=xiangya oct_id=M0008_2021_P0001694 true_label=1 prob=0.6165 guessed_tiff=M0008_2021_P0001694.tiff image_folder=loho_5centers/fold_03_external_XiangYa/external_octData/XiangYa/M0008_2021_P0001694

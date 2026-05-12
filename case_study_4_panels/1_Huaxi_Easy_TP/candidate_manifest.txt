@@ -1,0 +1,5 @@
+1. center=huaxi oct_id=M0008_2021_P0000181 true_label=1 prob=0.6049 guessed_tiff=M0008_2021_P0000181.tiff image_folder=loho_5centers/fold_02_external_HuaXi/external_octData/HuaXi/M0008_2021_P0000181
+2. center=huaxi oct_id=M0008_2021_P0000065 true_label=1 prob=0.5909 guessed_tiff=M0008_2021_P0000065.tiff image_folder=loho_5centers/fold_02_external_HuaXi/external_octData/HuaXi/M0008_2021_P0000065
+3. center=huaxi oct_id=M0008_2021_P0000089 true_label=1 prob=0.5834 guessed_tiff=M0008_2021_P0000089.tiff image_folder=loho_5centers/fold_02_external_HuaXi/external_octData/HuaXi/M0008_2021_P0000089
+4. center=huaxi oct_id=M0008_2021_P0000199 true_label=1 prob=0.5828 guessed_tiff=M0008_2021_P0000199.tiff image_folder=loho_5centers/fold_02_external_HuaXi/external_octData/HuaXi/M0008_2021_P0000199
+5. center=huaxi oct_id=M0008_2021_P0000306 true_label=1 prob=0.5799 guessed_tiff=M0008_2021_P0000306.tiff image_folder=loho_5centers/fold_02_external_HuaXi/external_octData/HuaXi/M0008_2021_P0000306
