@@ -124,8 +124,8 @@ ssh -T git@github.com
 | 名称 | 类型 | 指向 | 说明（中文） |
 |------|------|------|----------------|
 | `paper-v1-swin-baseline` | annotated tag | `6c48a1d` | v1：Swin-Tiny + 多模态，投稿前代码快照 |
-| `feature/v2-resnet-baseline` | 分支 | `2075111`（当前定稿） | v2 开发线：ResNet50 + 临床消融 + OCT-only 定稿 |
-| `paper-v2-resnet50-oct-baseline` | annotated tag | `2075111` | v2 定稿 baseline：ResNet50、OCT-only、LR=5e-5、POS_WEIGHT=1.25 |
+| `feature/v2-resnet-baseline` | 分支 | tip 见 `git rev-parse --short HEAD`；核心功能提交 `c9d30fe` | v2 开发线：ResNet50 + 临床消融 + OCT-only 定稿 |
+| `paper-v2-resnet50-oct-baseline` | annotated tag | 与分支 tip 一致（`git rev-parse paper-v2-resnet50-oct-baseline`） | v2 定稿 baseline：ResNet50、OCT-only、LR=5e-5、POS_WEIGHT=1.25 |
 
 **v2 定稿训练协议（环境变量）**
 
