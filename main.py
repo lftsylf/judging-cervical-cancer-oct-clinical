@@ -1,12 +1,26 @@
 import os
 import sys
+
+# expandable_segments 需 PyTorch >= 2.1；2.0.x 会在首次 .cuda() 时报 Unrecognized CachingAllocator option
+def _configure_cuda_allocator():
+    if os.environ.get("PYTORCH_CUDA_ALLOC_CONF"):
+        return
+    try:
+        import torch
+        ver = torch.__version__.split("+")[0]
+        parts = [int(x) for x in ver.split(".")[:2]]
+        if parts[0] > 2 or (parts[0] == 2 and parts[1] >= 1):
+            os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    except Exception:
+        pass
+
+
+_configure_cuda_allocator()
+
 import torch
 import torch.optim as optim
 import pandas as pd
 import random
-
-
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 # 添加项目根目录到 Python 路径
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -22,8 +36,63 @@ from training.ema import ModelEMA
 import numpy as np
 
 
+def _set_backbone_trainable(model: OptiGenesis, trainable: bool) -> None:
+    for p in model.vision_backbone.parameters():
+        p.requires_grad = trainable
+
+
+def _head_parameters(model: OptiGenesis):
+    for name, param in model.named_parameters():
+        if not name.startswith("vision_backbone."):
+            yield param
+
+
+def _describe_lr_plan() -> str:
+    freeze_n = int(getattr(Config, "FREEZE_BACKBONE_EPOCHS", 0) or 0)
+    bb = getattr(Config, "BACKBONE_LR", None)
+    hd = getattr(Config, "HEAD_LR", None)
+    if freeze_n > 0:
+        f_lr = float(getattr(Config, "FREEZE_HEAD_LR", Config.LR))
+        if bb is not None and hd is not None:
+            after = f"解冻后 backbone={bb}, head={hd}"
+        else:
+            after = f"解冻后全网 LR={Config.LR}"
+        return f"冻结 backbone 前 {freeze_n} 个 epoch（仅训 head, LR={f_lr}）；{after}"
+    if bb is not None and hd is not None:
+        return f"分层 LR: backbone={bb}, head(融合层+EDL 等)={hd}"
+    return f"全网统一 LR={Config.LR}"
+
+
+def build_optimizer(model: OptiGenesis, epoch: int = 0) -> optim.AdamW:
+    freeze_n = int(getattr(Config, "FREEZE_BACKBONE_EPOCHS", 0) or 0)
+    wd = float(Config.WEIGHT_DECAY)
+    bb_lr = getattr(Config, "BACKBONE_LR", None)
+    hd_lr = getattr(Config, "HEAD_LR", None)
+
+    if freeze_n > 0 and epoch < freeze_n:
+        _set_backbone_trainable(model, False)
+        lr = float(getattr(Config, "FREEZE_HEAD_LR", hd_lr if hd_lr is not None else Config.LR))
+        return optim.AdamW(list(_head_parameters(model)), lr=lr, weight_decay=wd)
+
+    _set_backbone_trainable(model, True)
+    if bb_lr is not None and hd_lr is not None:
+        return optim.AdamW(
+            [
+                {"params": list(model.vision_backbone.parameters()), "lr": bb_lr},
+                {"params": list(_head_parameters(model)), "lr": hd_lr},
+            ],
+            weight_decay=wd,
+        )
+    return optim.AdamW(model.parameters(), lr=float(Config.LR), weight_decay=wd)
+
+
+def build_scheduler(optimizer: optim.AdamW, start_epoch: int = 0):
+    remaining = max(1, int(Config.EPOCHS) - int(start_epoch))
+    return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=remaining)
+
+
 def seed_everything(seed: int):
-    """Lock all major randomness sources for reproducible training."""
+    """锁定主要随机源，使训练结果可复现。"""
     seed = int(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
 
@@ -160,8 +229,10 @@ def main():
         num_classes=Config.NUM_CLASSES
     ).to(device)
     
-    optimizer = optim.AdamW(model.parameters(), lr=Config.LR, weight_decay=Config.WEIGHT_DECAY)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=Config.EPOCHS)
+    freeze_backbone_epochs = int(getattr(Config, "FREEZE_BACKBONE_EPOCHS", 0) or 0)
+    optimizer = build_optimizer(model, epoch=0)
+    scheduler = build_scheduler(optimizer, start_epoch=0)
+    print(f"【学习率】{_describe_lr_plan()}")
 
     use_ema = getattr(Config, "ENABLE_MODEL_EMA", False)
     ema_decay = getattr(Config, "EMA_DECAY", 0.999)
@@ -205,7 +276,15 @@ def main():
         print(" Model EMA: 关闭")
 
     for epoch in range(Config.EPOCHS):
-        # Train
+        if freeze_backbone_epochs > 0 and epoch == freeze_backbone_epochs:
+            print(
+                f"\n🔓 第 {epoch + 1} 轮：解冻 vision_backbone，按新学习率重建优化器 …"
+            )
+            optimizer = build_optimizer(model, epoch=epoch)
+            scheduler = build_scheduler(optimizer, start_epoch=epoch)
+            print(f"   {_describe_lr_plan()}")
+
+        # 训练一个 epoch
         train_loss = train_epoch(
             model,
             train_loader,
@@ -234,7 +313,7 @@ def main():
             coral_warmup_epochs=getattr(Config, "CORAL_WARMUP_EPOCHS", 8),
         )
         
-        # Validation - 获取完整指标（EMA 开启时用 shadow 权重评估）
+        # 验证：计算完整指标（开启 EMA 时用 shadow 权重做评估）
         if ema is not None:
             ema.apply_shadow(model)
         try:

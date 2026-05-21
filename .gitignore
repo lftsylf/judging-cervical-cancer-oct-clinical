@@ -25,3 +25,8 @@ all_outputs_period_one/
 
 # Keep output metrics/artifacts, skip raw runtime logs
 outputs/**/*.log
+
+# run_experiment.sh --detach 主日志与 PID（可按需保留在本地）
+logs/detached_*.log
+logs/detached_last.pid
+logs/detached_latest.log

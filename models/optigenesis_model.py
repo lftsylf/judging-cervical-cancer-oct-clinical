@@ -5,18 +5,18 @@ from .uncertainty import UncertaintyHead
 
 class OptiGenesis(nn.Module):
     """
-    OptiGenesis Model: Lancet Edition
-    架构: Swin Transformer (Vision) + MLP (Clinical) -> Fusion -> EDL Head
+    OptiGenesis（Lancet 实验线版本）
+    结构: timm 视觉骨干（ResNet / Swin / ViT 等）+ 临床 MLP → 融合层 → EDL 不确定性头
     """
-    def __init__(self, model_name='swin_tiny_patch4_window7_224', num_classes=2, use_clinical=True):
+    def __init__(self, model_name='resnet50', num_classes=2, use_clinical=True):
         super().__init__()
         self.use_clinical = use_clinical
-        
-        # 1. 视觉基座 (Swin Transformer)
-        print(f"🔍 Loading Vision Backbone: {model_name}")
-        # num_classes=0 表示移除原本的分类头，只提取特征
+        self.backbone_name = model_name
+
+        # 1. 视觉基座（timm；num_classes=0 去掉分类头，前向得到全局池化后的特征向量）
+        print(f"🔍 正在加载视觉 backbone: {model_name}")
         self.vision_backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
-        self.vision_dim = self.vision_backbone.num_features # Swin-Tiny通常是768
+        self.vision_dim = self.vision_backbone.num_features
         
         # 2. 临床数据编码器 (MLP)
         if self.use_clinical:
@@ -56,16 +56,16 @@ class OptiGenesis(nn.Module):
         img_flat = img.view(B * N_images, C, H, W)  # [B*N, C, H, W]
         
         # 提取所有图像的特征
-        v_feat_flat = self.vision_backbone(img_flat)  # [B*N, 768]
-        v_feat = v_feat_flat.view(B, N_images, -1)  # [B, N, 768]
-        
+        v_feat_flat = self.vision_backbone(img_flat)  # [B*N, vision_dim]
+        v_feat = v_feat_flat.view(B, N_images, -1)  # [B, N, vision_dim]
+
         # 多图像特征融合：平均池化
-        v_feat = torch.mean(v_feat, dim=1)  # [B, 768]
+        v_feat = torch.mean(v_feat, dim=1)  # [B, vision_dim]
         
         # B. 提取/融合临床特征
         if self.use_clinical:
             c_feat = self.clinical_mlp(clinical) # [B, 64]
-            feat = torch.cat([v_feat, c_feat], dim=1) # [B, 832]
+            feat = torch.cat([v_feat, c_feat], dim=1)  # [B, vision_dim + 64]
         else:
             c_feat = None
             feat = v_feat

@@ -4,9 +4,9 @@ import torch.nn.functional as F
 
 class UncertaintyHead(nn.Module):
     """
-    Evidence-based Uncertainty Head (EDL).
-    输出不是概率，而是'证据'(Evidence)。
-    Reference: Evidential Deep Learning to Quantify Classification Uncertainty (NeurIPS 2018)
+    基于证据的不确定性头（EDL）。
+    这里输出的不是 softmax 概率，而是 Dirichlet 的「证据」再转成 alpha。
+    参考论文: Evidential Deep Learning to Quantify Classification Uncertainty (NeurIPS 2018)
     """
     def __init__(self, in_features, num_classes=2):
         super().__init__()

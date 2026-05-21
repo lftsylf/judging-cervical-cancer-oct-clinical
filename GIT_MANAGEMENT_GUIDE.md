@@ -100,3 +100,64 @@ ssh -T git@github.com
 - 当前默认开发分支：`main`
 - 默认推送远程：`origin`
 - 建议持续保持“代码入库、数据不入库”的策略，确保仓库轻量且可复现。
+
+## 8. 多轮实验与 v1 / v2 并行（分支 + 标签）
+
+当 **main 上已是旧实验代码**（例如 Swin 正式稿），而你要在同一仓库里做 **v2 大改**（如默认骨干改为 ResNet、删多模态等）时，建议：
+
+1. **在当前 main 的提交上打标签**（锁住“旧论文可复现”的代码快照，不依赖分支是否被删）  
+   - 例：`git tag -a paper-v1-swin-baseline -m "投稿前 Swin+临床+WMA/EMA/AUX 代码基线"`  
+   - `git push origin paper-v1-swin-baseline`
+
+2. **从该提交拉 v2 开发分支**（在分支上改默认骨干、跑新消融，避免把未验证完的改动直接堆在 main）  
+   - 例：`git checkout -b feature/v2-resnet-baseline`  
+   - v2 跑通、表定稿后再合并回 `main`，或保留分支名并在论文里写「v2 对应分支 `feature/v2-resnet-baseline` + commit xxx」。
+
+3. **正文/笔记里固定“结果 ↔ 代码”**  
+   - 每个正式表注明：`tag` 或 `分支名` + `git rev-parse --short HEAD` + 关键 `export`（如 `OPTIGENESIS_BACKBONE`）。  
+   - 输出目录与旧实验分开（例如 `outputs_baseline_v2_resnet50/`，见 `run_baseline_t0.sh`）。
+
+已 push 到远端的 history **不会**因你新建分支而丢失；标签指向具体 commit，最适合当“论文快照”。若你希望 **main 永远代表最新开发线**，也可在打完 v1 标签后把 v2 合并进 main，由标签承担“旧稿复现”职责。
+
+### 8.1 本仓库已落盘的标签与分支（2026-05-21）
+
+| 名称 | 类型 | 指向 | 说明（中文） |
+|------|------|------|----------------|
+| `paper-v1-swin-baseline` | annotated tag | `6c48a1d` | v1：Swin-Tiny + 多模态，投稿前代码快照 |
+| `feature/v2-resnet-baseline` | 分支 | 见 `git rev-parse --short HEAD` | v2 开发线：ResNet50 + 临床消融 + OCT-only 定稿 |
+| `paper-v2-resnet50-oct-baseline` | annotated tag | 本分支定稿 commit | v2 定稿 baseline：ResNet50、OCT-only、LR=5e-5、POS_WEIGHT=1.25 |
+
+**v2 定稿训练协议（环境变量）**
+
+```bash
+export OPTIGENESIS_BACKBONE=resnet50
+export OPTIGENESIS_USE_CLINICAL=0
+export OPTIGENESIS_LR=5e-5
+# POS_WEIGHT 默认 1.25（lancet_config）；可不 export
+export OPTIGENESIS_USE_WMA=0
+export OPTIGENESIS_ENABLE_AUX=0
+export OPTIGENESIS_ENABLE_EMA=0
+export OPTIGENESIS_ENABLE_CORAL=0
+```
+
+**脚本与文档**
+
+- T0 定稿：`./run_baseline_t0_oct_only.sh` → `outputs_baseline_t0_v2_resnet50_oct_only/`
+- 迭代记录：`outputs/baseline v2/BASELINE_V2_迭代与定稿.md`（本地归档；`outputs/**/*.log` 不入库）
+
+**复现命令**
+
+```bash
+git fetch origin
+git checkout paper-v2-resnet50-oct-baseline   # 或 feature/v2-resnet-baseline
+git rev-parse --short HEAD
+./run_experiment.sh --detach /path/to/tsy_loho ./run_baseline_t0_oct_only.sh
+```
+
+**推送标签与分支（需写权限时在本机执行）**
+
+```bash
+git push origin paper-v1-swin-baseline
+git push origin feature/v2-resnet-baseline
+git push origin paper-v2-resnet50-oct-baseline
+```

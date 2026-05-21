@@ -64,7 +64,7 @@ def train_epoch(
             imgs_t, clin_t, _ = next(target_iter)
             imgs_t, clin_t = imgs_t.to(device), clin_t.to(device)
 
-        # Forward (Alpha + 可选 aux + 可选 CORAL 特征)
+        # 前向：得到 alpha，以及可选的 aux / CORAL 用特征
         if enable_multimodal_aux and use_coral:
             alpha, aux_logits_v, aux_logits_c, feat_s = model(
                 imgs, clinical, return_aux=True, return_coral_feat=True
@@ -82,7 +82,7 @@ def train_epoch(
             aux_logits_v, aux_logits_c = None, None
             feat_s, feat_t = None, None
         
-        # Loss - 根据参数选择损失函数
+        # 损失：按参数在 WMA / Focal+EDL / 纯 EDL 间选择
         if use_wma:
             loss = wma_loss(
                 alpha,
@@ -209,18 +209,18 @@ def validate(
     
     # ========== 1. 基本分类指标 ==========
     try:
-        # Accuracy
+        # 准确率
         metrics['accuracy'] = accuracy_score(targets, preds)
         
-        # Balanced Accuracy (平衡准确率，适合不平衡数据)
+        # 平衡准确率（适合类别不平衡）
         metrics['balanced_accuracy'] = balanced_accuracy_score(targets, preds)
         
-        # Precision, Recall, F1 (per class)
+        # 各类别 precision / recall / F1
         precision_per_class = precision_score(targets, preds, average=None, zero_division=0, labels=[0, 1])
         recall_per_class = recall_score(targets, preds, average=None, zero_division=0, labels=[0, 1])
         f1_per_class = f1_score(targets, preds, average=None, zero_division=0, labels=[0, 1])
         
-        # Weighted平均（考虑类别不平衡，更有意义）
+        # 加权平均（考虑类别不平衡，有时比 macro 更贴近整体）
         metrics['precision_weighted'] = precision_score(targets, preds, average='weighted', zero_division=0)
         metrics['recall_weighted'] = recall_score(targets, preds, average='weighted', zero_division=0)
         metrics['f1_weighted'] = f1_score(targets, preds, average='weighted', zero_division=0)
@@ -230,7 +230,7 @@ def validate(
         
         # 阳性类别（类别1）的关键指标（最重要）
         metrics['precision_positive'] = precision_per_class[1] if len(precision_per_class) > 1 else 0.0  # PPV
-        metrics['recall_positive'] = recall_per_class[1] if len(recall_per_class) > 1 else 0.0  # Sensitivity/TPR
+        metrics['recall_positive'] = recall_per_class[1] if len(recall_per_class) > 1 else 0.0  # sensitivity / TPR
         metrics['f1_positive'] = f1_per_class[1] if len(f1_per_class) > 1 else 0.0
         
     except Exception as e:
@@ -267,16 +267,16 @@ def validate(
         if cm.size == 4:  # 2x2矩阵
             tn, fp, fn, tp = cm.ravel()
             
-            # Sensitivity (Recall of positive class, 敏感度/召回率)
+            # sensitivity：阳性类召回率
             metrics['sensitivity'] = tp / (tp + fn) if (tp + fn) > 0 else 0.0
             
-            # Specificity (Recall of negative class, 特异度)
+            # specificity：阴性类召回率
             metrics['specificity'] = tn / (tn + fp) if (tn + fp) > 0 else 0.0
             
-            # Positive Predictive Value (PPV, 阳性预测值 = Precision)
+            # PPV：阳性预测值（precision 在阳性上）
             metrics['ppv'] = tp / (tp + fp) if (tp + fp) > 0 else 0.0
             
-            # Negative Predictive Value (NPV, 阴性预测值)
+            # NPV：阴性预测值
             metrics['npv'] = tn / (tn + fn) if (tn + fn) > 0 else 0.0
             
             # 混淆矩阵元素
