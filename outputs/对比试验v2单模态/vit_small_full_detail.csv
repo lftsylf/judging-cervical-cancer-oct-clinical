@@ -1,0 +1,46 @@
+model,hospital,seed,ext_roc,ext_pr,ext_bacc
+ViT-Small Full,huaxi,42,0.5631,0.4903,0.5
+ViT-Small Full,huaxi,123,0.5392,0.392,0.5196
+ViT-Small Full,huaxi,2024,0.579,0.4624,0.5051
+ViT-Small Full,huaxi,3407,0.5767,0.4314,0.5
+ViT-Small Full,huaxi,114514,0.5625,0.4173,0.5318
+ViT-Small Full,liaoning,42,0.617,0.4898,0.5
+ViT-Small Full,liaoning,123,0.6086,0.4841,0.5
+ViT-Small Full,liaoning,2024,0.6061,0.4878,0.5
+ViT-Small Full,liaoning,3407,0.6265,0.4684,0.5
+ViT-Small Full,liaoning,114514,0.6073,0.4486,0.5
+ViT-Small Full,xiangya,42,0.59,0.778,0.5
+ViT-Small Full,xiangya,123,0.7045,0.8314,0.5
+ViT-Small Full,xiangya,2024,0.709,0.8601,0.5
+ViT-Small Full,xiangya,3407,0.5149,0.6928,0.5
+ViT-Small Full,xiangya,114514,0.608,0.7776,0.5
+ViT-Small (plain),huaxi,42,0.5966,0.4344,0.5375
+ViT-Small (plain),huaxi,123,0.5392,0.4031,0.4909
+ViT-Small (plain),huaxi,2024,0.5784,0.4348,0.5142
+ViT-Small (plain),huaxi,3407,0.5557,0.3998,0.5707
+ViT-Small (plain),huaxi,114514,0.579,0.4238,0.504
+ViT-Small (plain),liaoning,42,0.637,0.4931,0.5615
+ViT-Small (plain),liaoning,123,0.6886,0.5027,0.5
+ViT-Small (plain),liaoning,2024,0.6376,0.4864,0.5563
+ViT-Small (plain),liaoning,3407,0.6046,0.44,0.5832
+ViT-Small (plain),liaoning,114514,0.6217,0.4388,0.5
+ViT-Small (plain),xiangya,42,0.6697,0.8499,0.5
+ViT-Small (plain),xiangya,123,0.6214,0.7744,0.5
+ViT-Small (plain),xiangya,2024,0.7279,0.8883,0.5
+ViT-Small (plain),xiangya,3407,0.8224,0.9237,0.5
+ViT-Small (plain),xiangya,114514,0.692,0.8226,0.5
+OptiGenesis Full (ResNet50),huaxi,42,0.5955,0.4438,0.6179
+OptiGenesis Full (ResNet50),huaxi,123,0.5966,0.438,0.5645
+OptiGenesis Full (ResNet50),huaxi,2024,0.6386,0.5413,0.5327
+OptiGenesis Full (ResNet50),huaxi,3407,0.6381,0.5304,0.5
+OptiGenesis Full (ResNet50),huaxi,114514,0.6312,0.4745,0.6099
+OptiGenesis Full (ResNet50),liaoning,42,0.6219,0.468,0.5071
+OptiGenesis Full (ResNet50),liaoning,123,0.6404,0.4615,0.5072
+OptiGenesis Full (ResNet50),liaoning,2024,0.5928,0.4253,0.5
+OptiGenesis Full (ResNet50),liaoning,3407,0.6417,0.4402,0.6068
+OptiGenesis Full (ResNet50),liaoning,114514,0.5847,0.4386,0.5153
+OptiGenesis Full (ResNet50),xiangya,42,0.7264,0.8469,0.5
+OptiGenesis Full (ResNet50),xiangya,123,0.7169,0.8739,0.5
+OptiGenesis Full (ResNet50),xiangya,2024,0.7557,0.8364,0.5
+OptiGenesis Full (ResNet50),xiangya,3407,0.6075,0.764,0.5
+OptiGenesis Full (ResNet50),xiangya,114514,0.692,0.7815,0.6092

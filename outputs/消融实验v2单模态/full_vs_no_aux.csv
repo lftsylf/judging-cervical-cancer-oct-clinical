@@ -1,0 +1,16 @@
+hospital,seed,full_ext_roc,no_aux_ext_roc,delta,winner
+huaxi,42,0.5955,0.6290,+0.0335,no_aux
+huaxi,123,0.5966,0.5830,-0.0136,full
+huaxi,2024,0.6386,0.6324,-0.0062,full
+huaxi,3407,0.6381,0.6636,+0.0255,no_aux
+huaxi,114514,0.6312,0.6153,-0.0159,full
+liaoning,42,0.6219,0.6195,-0.0024,full
+liaoning,123,0.6404,0.6433,+0.0029,no_aux
+liaoning,2024,0.5928,0.6833,+0.0905,no_aux
+liaoning,3407,0.6417,0.6287,-0.0130,full
+liaoning,114514,0.5847,0.5929,+0.0082,no_aux
+xiangya,42,0.7264,0.7174,-0.0090,full
+xiangya,123,0.7169,0.7214,+0.0045,no_aux
+xiangya,2024,0.7557,0.6517,-0.1040,full
+xiangya,3407,0.6075,0.5308,-0.0767,full
+xiangya,114514,0.6920,0.5721,-0.1199,full

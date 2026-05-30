@@ -1,0 +1,4 @@
+﻿Hospital,AUC (Mean±Std),Adjusted Bal Acc (Mean±Std),Adjusted F1 (Mean±Std),Sensitivity (Mean±Std),Specificity (Mean±Std)
+huaxi,0.5698±0.0224,0.5977±0.0164,0.5235±0.0229,0.6062±0.0648,0.5891±0.0711
+liaoning,0.6379±0.0314,0.6386±0.0420,0.5603±0.0506,0.6899±0.1583,0.5874±0.1652
+xiangya,0.7067±0.0753,0.7081±0.0635,0.7481±0.1138,0.6896±0.1995,0.7267±0.2326
