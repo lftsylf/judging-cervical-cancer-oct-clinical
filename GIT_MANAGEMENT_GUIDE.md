@@ -161,3 +161,42 @@ git push origin paper-v1-swin-baseline
 git push origin feature/v2-resnet-baseline
 git push origin paper-v2-resnet50-oct-baseline
 ```
+
+### 8.2 Paper v3 冻结与 v4 开发线（2026-07-18）
+
+> **登记日期**：2026-07-18  
+> **动作**：将「整稿实验（baseline + 消融 + 对比）」冻结为第三版，并开第四版开发分支。
+
+| 名称 | 类型 | 说明（中文） |
+|------|------|----------------|
+| `paper-v1-swin-baseline` | tag | v1：Swin-Tiny + 多模态 |
+| `paper-v2-resnet50-oct-baseline` | tag | v2：ResNet50 OCT-only **协议**锁定 |
+| `paper-v3-muse-full` | tag | **v3 整稿冻结**（含消融+对比代码与文档登记日） |
+| `feature/v2-resnet-baseline` | 分支 | v2/v3 历史开发线（只读回顾） |
+| `feature/paper-v4` | 分支 | **第四版开发中**（帧级不确定聚合 + 评估协议改造） |
+
+**本地归档（大文件不入库，仅本机）**
+
+| 路径 | 说明 |
+|------|------|
+| `outputs/第三版/` | 第三版实验结果只读归档（见其中 `README_冻结说明_2026-07-18.md`） |
+| `data/snapshots/paper_v3_tsy_loho/` | 第三版 LOHO CSV 划分快照（见 `README_2026-07-18.md`） |
+| `outputs/paper_v4/` | 第四版新产物目录（见 `README_2026-07-18.md`） |
+
+**为何仍快照 CSV（即使 v4 会改划分）**
+
+审稿意见要求内部再划 val、外部只终评；划分会变。快照用于：**复现第三版表、审稿对照、防止原地改坏旧名单**。v4 新划分另存 `data/snapshots/paper_v4_*`，勿覆盖 v3 快照。
+
+**常用命令**
+
+```bash
+# 回到第三版代码
+git checkout paper-v3-muse-full
+
+# 在第四版开发
+git checkout feature/paper-v4
+
+# 推送冻结（需远端写权限）
+git push origin paper-v3-muse-full
+git push -u origin feature/paper-v4
+```
