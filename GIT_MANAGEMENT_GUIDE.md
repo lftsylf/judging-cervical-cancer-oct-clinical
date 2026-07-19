@@ -200,3 +200,17 @@ git checkout feature/paper-v4
 git push origin paper-v3-muse-full
 git push -u origin feature/paper-v4
 ```
+
+### 8.3 根目录脚本归档（2026-07-19）
+
+> **登记日期**：2026-07-19  
+> **动作**：清理仓库根目录大量 `run_*.sh`，迁入 `scripts/paper_v3_run/`。
+
+| 路径 | 说明 |
+|------|------|
+| `run_experiment.sh` | **仍留在仓库根**（detach / 绑数据） |
+| `scripts/paper_v3_run/` | 第三版及更早的 baseline / 消融 / 对比启动脚本（只读复现） |
+| `README_运行脚本_2026-07-19.md` | 根目录入口说明 |
+| `scripts/paper_v3_run/README_2026-07-19.md` | 归档目录说明与调用示例 |
+
+第四版新脚本建议放在 `scripts/paper_v4_run/`（待建），产物进 `outputs/paper_v4/`。
