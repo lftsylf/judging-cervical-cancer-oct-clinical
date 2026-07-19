@@ -31,10 +31,13 @@
 | `run_comparison_convnext_small_t0_oct_only.sh` | `convnext_small` | **2** | 8GB 卡 batch=4 OOM |
 | `run_comparison_vit_small_t0_oct_only.sh` | `vit_small_patch16_224` | **2** | 8GB 卡 batch=4 OOM |
 | `run_comparison_resnet18_t0_oct_only.sh` | `resnet18` | 4 | 轻量 CNN，与 baseline 同 batch |
+| `run_comparison_densenet121_t0_oct_only.sh` | `densenet121` | 4 | 经典 CNN（2017），医学影像常用 |
+| `run_comparison_dinov3_small_t0_oct_only.sh` | `vit_small_patch16_dinov3` | **2** | 通用视觉基础模型 DINOv3-S |
 
 共享库：`run_comparison_t0_oct_only_lib.sh`  
 串行入口：`run_comparison_t0_oct_only_all.sh`（5 组）  
-**续跑剩余 3 组**（Swin 已完成后）：`run_comparison_t0_oct_only_remaining.sh`（先 ResNet18，再 ConvNeXt/ViT-S）
+**续跑剩余 3 组**（Swin 已完成后）：`run_comparison_t0_oct_only_remaining.sh`（先 ResNet18，再 ConvNeXt/ViT-S）  
+**补充 2 组**（DenseNet121 → DINOv3-S）：`run_comparison_t0_oct_only_supplement.sh`
 
 Swin 系列使用 `BATCH_SIZE=2`；可选 `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128`（**PyTorch 2.0.x 勿用 expandable_segments**）。
 

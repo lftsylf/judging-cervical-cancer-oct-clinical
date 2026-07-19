@@ -1,6 +1,6 @@
 # v2 单模态 T0 — 单模块消融（only WMA / only EMA / only Aux）
 
-> 三组均 **15/15 完成**。数据：`only_modules_summary.csv`、`only_modules_pivot.csv`；完整 2³ 矩阵：`ablation_complete_2pow3_summary.csv`。
+> 三组均 **15/15 完成**。数据：`only_modules_summary.csv`、`ablation_pivot_ext_roc.csv`；完整 2³ 矩阵：`ablation_complete_2pow3_summary.csv`。
 
 ## 1. 外部 ROC-AUC 总表（15 次 mean±std）
 
