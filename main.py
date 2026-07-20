@@ -159,9 +159,33 @@ def export_split_predictions(
     df['uncertainty'] = pred_details['uncertainties'][:n].astype(float)
     df['y_pred'] = pred_details['preds'][:n].astype(int)
 
+    # 帧级不确定度 / 权重 / 建议复核帧（高 u）——人工复核提示
+    frame_u = pred_details.get('frame_uncertainties')
+    frame_w = pred_details.get('frame_weights')
+    review_idx = pred_details.get('review_frame_indices')
+    if frame_u is not None and len(frame_u) >= n and frame_u.ndim == 2:
+        n_frames = frame_u.shape[1]
+        for i in range(n_frames):
+            df[f'frame_u_{i}'] = frame_u[:n, i].astype(float)
+            if frame_w is not None and frame_w.shape == frame_u.shape:
+                df[f'frame_w_{i}'] = frame_w[:n, i].astype(float)
+        if review_idx is not None and len(review_idx) >= n:
+            # 例如 "7;3;11" —— 不确定度从高到低的帧下标
+            df['review_frame_indices'] = [
+                ";".join(str(int(x)) for x in row)
+                for row in review_idx[:n]
+            ]
+
     output_path = os.path.join(logs_dir, f"{split_name}_sample_predictions.csv")
     df.to_csv(output_path, index=False, encoding='utf-8-sig')
     print(f"【{split_label}】逐样本概率已保存: {output_path}")
+    if frame_u is not None and len(frame_u) >= n and frame_u.ndim == 2:
+        review_path = os.path.join(logs_dir, f"{split_name}_frame_review_hints.csv")
+        review_cols = ['hospital', 'split', 'y_true', 'y_pred', 'prob_positive', 'uncertainty', 'review_frame_indices']
+        review_cols = [c for c in review_cols if c in df.columns]
+        extra_u = [c for c in df.columns if c.startswith('frame_u_')]
+        df[review_cols + extra_u].to_csv(review_path, index=False, encoding='utf-8-sig')
+        print(f"【{split_label}】高不确定帧复核提示已保存: {review_path}")
     return output_path, metrics
 
 
@@ -222,11 +246,20 @@ def main():
         return
     
     # 3. 模型构建
-    print(f"【构建模型】骨干网络: {Config.BACKBONE}  |  临床特征融合: {Config.USE_CLINICAL}")
+    frame_agg_mode = getattr(Config, "FRAME_AGG_MODE", "uncertainty_weighted")
+    frame_agg_temp = float(getattr(Config, "FRAME_AGG_TEMPERATURE", 0.5))
+    frame_review_k = int(getattr(Config, "FRAME_REVIEW_TOP_K", 3))
+    print(
+        f"【构建模型】骨干网络: {Config.BACKBONE}  |  临床特征融合: {Config.USE_CLINICAL}  |  "
+        f"帧聚合: {frame_agg_mode} (τ={frame_agg_temp}, review_top_k={frame_review_k})"
+    )
     model = OptiGenesis(
-        model_name=Config.BACKBONE, 
+        model_name=Config.BACKBONE,
         use_clinical=Config.USE_CLINICAL,
-        num_classes=Config.NUM_CLASSES
+        num_classes=Config.NUM_CLASSES,
+        frame_agg_mode=frame_agg_mode,
+        agg_temperature=frame_agg_temp,
+        review_top_k=frame_review_k,
     ).to(device)
     
     freeze_backbone_epochs = int(getattr(Config, "FREEZE_BACKBONE_EPOCHS", 0) or 0)

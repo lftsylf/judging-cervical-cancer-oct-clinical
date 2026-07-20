@@ -153,13 +153,18 @@ def validate(
     uncertainties = []
     targets = []
     losses = []
+    # 帧级明细（uncertainty_weighted / equal 时有意义；mean 模式为占位）
+    frame_uncertainties_all = []
+    frame_weights_all = []
+    review_indices_all = []
     
     # 收集所有batch的预测结果和损失
     with torch.no_grad():
         for imgs, clinical, labels in loader:
             imgs, clinical, labels = imgs.to(device), clinical.to(device), labels.to(device)
             
-            alpha = model(imgs, clinical)
+            # 需要帧级复核信息时打开 return_frame_details；训练损失仍只用患者级 alpha
+            alpha, frame_details = model(imgs, clinical, return_frame_details=True)
             
             # 计算损失（用于验证集的平均损失）
             y_onehot = F.one_hot(labels, num_classes=2).float()
@@ -187,16 +192,31 @@ def validate(
             S = torch.sum(alpha, dim=1, keepdim=True)
             p = alpha / S
             
-            # 2. 计算不确定性: u = K / sum(alpha)
+            # 2. 患者级不确定性: u = K / sum(alpha)
             u = 2.0 / S
             
             probs.extend(p[:, 1].cpu().numpy())  # 取阳性概率
             uncertainties.extend(u.cpu().numpy().flatten())
             targets.extend(labels.cpu().numpy())
+
+            fu = frame_details["frame_uncertainty"].detach().cpu().numpy()
+            fw = frame_details["frame_weights"].detach().cpu().numpy()
+            ri = frame_details["review_frame_indices"].detach().cpu().numpy()
+            frame_uncertainties_all.append(fu)
+            frame_weights_all.append(fw)
+            review_indices_all.append(ri)
     
     probs = np.array(probs)
     targets = np.array(targets)
     uncertainties = np.array(uncertainties)
+    if frame_uncertainties_all:
+        frame_uncertainties_arr = np.concatenate(frame_uncertainties_all, axis=0)
+        frame_weights_arr = np.concatenate(frame_weights_all, axis=0)
+        review_indices_arr = np.concatenate(review_indices_all, axis=0)
+    else:
+        frame_uncertainties_arr = np.zeros((0, 0), dtype=np.float32)
+        frame_weights_arr = np.zeros((0, 0), dtype=np.float32)
+        review_indices_arr = np.zeros((0, 0), dtype=np.int64)
     
     # 转换为二分类预测（阈值0.5）
     preds = (probs > 0.5).astype(int)
@@ -360,6 +380,10 @@ def validate(
             'probs': probs.copy(),
             'uncertainties': uncertainties.copy(),
             'preds': preds.copy(),
+            # 帧级：供人工复核高不确定 B-scan（每行一个患者）
+            'frame_uncertainties': frame_uncertainties_arr.copy(),
+            'frame_weights': frame_weights_arr.copy(),
+            'review_frame_indices': review_indices_arr.copy(),
         }
         return metrics, prediction_details
     return metrics

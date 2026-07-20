@@ -81,7 +81,10 @@ def main():
     model = OptiGenesis(
         model_name=Config.BACKBONE,
         use_clinical=Config.USE_CLINICAL,
-        num_classes=Config.NUM_CLASSES
+        num_classes=Config.NUM_CLASSES,
+        frame_agg_mode=getattr(Config, "FRAME_AGG_MODE", "uncertainty_weighted"),
+        agg_temperature=float(getattr(Config, "FRAME_AGG_TEMPERATURE", 0.5)),
+        review_top_k=int(getattr(Config, "FRAME_REVIEW_TOP_K", 3)),
     ).to(device)
     
     # 加载最佳模型权重

@@ -67,6 +67,16 @@ class Config:
     USE_CLINICAL = _env_bool("OPTIGENESIS_USE_CLINICAL", True)
     USE_UNCERTAINTY = True  # 开启不确定性估计 (Lancet核心亮点)
     NUM_CLASSES = 2         # 二分类: < CIN2 (阴性) vs >= CIN2 (阳性)
+
+    # --- 4b. 多帧聚合（v4 主方法：帧级 EDL + 不确定加权）---
+    # mean                  : 等权均值池化特征 → 患者级 EDL（≈ v3 / baseline B1）
+    # equal                 : 帧级 EDL → 等权平均 α（消融：有帧 u、无加权）
+    # uncertainty_weighted  : 帧级 EDL → softmax((1−u)/τ) 加权聚合 α（Ours）
+    FRAME_AGG_MODE = os.getenv("OPTIGENESIS_FRAME_AGG", "uncertainty_weighted").strip().lower()
+    # 加权温度 τ：越小越「只信最确定的几帧」；越大越接近等权
+    FRAME_AGG_TEMPERATURE = _env_float("OPTIGENESIS_FRAME_AGG_TEMP", 0.5)
+    # 每例患者导出不确定度最高的 top-k 帧下标，供人工复核
+    FRAME_REVIEW_TOP_K = _env_int("OPTIGENESIS_FRAME_REVIEW_TOP_K", 3)
     
     # --- 5. 训练超参 ---
     # 允许通过环境变量覆盖，便于批量脚本循环调用（例如 T0 设为 30）
