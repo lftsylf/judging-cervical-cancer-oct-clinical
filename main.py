@@ -146,7 +146,12 @@ def export_split_predictions(
 
     df = pd.read_csv(source_csv_path).reset_index(drop=True)
     n = min(len(df), len(pred_details['targets']))
-    split_label = {"development": "开发集", "external": "外部集"}.get(split_name, split_name)
+    split_label = {
+        "train": "训练集",
+        "val": "内部验证集",
+        "external": "外部终评集",
+        "development": "开发集",
+    }.get(split_name, split_name)
     if n == 0:
         print(f"⚠️ 【{split_label}】逐样本结果为空，跳过导出。")
         return None, metrics
@@ -197,14 +202,15 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"【项目】OptiGenesis (Lancet)  |  【设备】{device}")
     
-    # 2. 数据加载
-    # 动态获取当前医院名称对应的 CSV 文件名
+    # 2. 数据加载（v4 协议：train / 内部 val / external 终评）
+    # 折名仍 = 外部测试医院；选模与早停只用 val_*.csv，external 训练过程不用
     hospital_name = Config.HOSPITAL_NAME.lower()
     run_folder = os.getenv("OPTIGENESIS_OUTPUT_RUN_NAME", "").strip().lower()
     if not run_folder or os.path.sep in run_folder or ".." in run_folder:
         run_folder = hospital_name
-    train_csv = os.path.join(Config.DATA_ROOT, f"development_{hospital_name}.csv")
-    val_csv = os.path.join(Config.DATA_ROOT, f"external_{hospital_name}.csv")
+    train_csv = os.path.join(Config.DATA_ROOT, f"train_{hospital_name}.csv")
+    val_csv = os.path.join(Config.DATA_ROOT, f"val_{hospital_name}.csv")
+    external_csv = os.path.join(Config.DATA_ROOT, f"external_{hospital_name}.csv")
     run_output_dir = os.path.join(Config.OUTPUT_DIR, run_folder)
     checkpoints_dir = os.path.join(run_output_dir, "checkpoints")
     logs_dir = os.path.join(run_output_dir, "logs")
@@ -213,21 +219,34 @@ def main():
     
     print(f"【数据目录】{Config.DATA_ROOT}")
     print(f"【输出目录】{run_output_dir}")
-    print(f"【当前医院】{Config.HOSPITAL_NAME}  （开发集: {train_csv}  |  外部集: {val_csv}）")
+    print(
+        f"【当前医院折】{Config.HOSPITAL_NAME}  |  "
+        f"训练: {train_csv}  |  内部验证: {val_csv}  |  外部终评: {external_csv}"
+    )
     
     try:
-        if not os.path.exists(train_csv) or not os.path.exists(val_csv):
-            print("⚠️ 未找到对应 CSV，请先运行 data/prepare_loho_data.py 生成 development_*.csv 与 external_*.csv")
-            # 为简单起见，这里假设用户已经正确配置了 Config 并且运行了 LOHO 数据预处理
+        missing = [p for p in (train_csv, val_csv, external_csv) if not os.path.exists(p)]
+        if missing:
+            print("⚠️ 未找到 CSV:", missing)
+            print(
+                "请先运行: python data/prepare_paper_v4_splits.py --write\n"
+                "（需已有 development_*.csv / external_*.csv）"
+            )
             
         # DataLoader 使用固定 seed + worker_init_fn，确保多进程增强与采样可复现
         train_loader = get_dataloader(train_csv, mode='train', seed=Config.SEED)
         val_loader = get_dataloader(val_csv, mode='val', seed=Config.SEED + 1000)
+        external_loader = get_dataloader(external_csv, mode='val', seed=Config.SEED + 2000)
         train_labels = np.asarray(getattr(train_loader.dataset, "labels", []), dtype=np.int64)
         train_class_counts = np.bincount(train_labels, minlength=2).tolist()
         enable_coral = getattr(Config, "ENABLE_DOMAIN_CORAL", False)
-        # CORAL 目标域与验证同一 CSV；复用 val_loader，避免再占一份 DataLoader/显存
-        uda_target_loader = val_loader if enable_coral else None
+        # v4：禁止用 external 做 CORAL 目标域（避免测试域参与训练）；CORAL 默认应关闭
+        if enable_coral:
+            print(
+                "⚠️ v4 协议下已禁用 CORAL 使用 external；"
+                "请关闭 OPTIGENESIS_ENABLE_CORAL，或后续改为仅用内部无标签源。"
+            )
+        uda_target_loader = None
         
         # -------------------------------------------------------------------------
         # 核心策略调整：针对“零漏诊”需求的手动加权
@@ -242,7 +261,10 @@ def main():
         print(f" 数据加载失败: {e}")
         import traceback
         traceback.print_exc()
-        print("请确保已运行 prepare_loho_data.py 生成 development_*.csv 和 external_*.csv")
+        print(
+            "请确保已运行 prepare_loho_data.py 与 "
+            "python data/prepare_paper_v4_splits.py --write"
+        )
         return
     
     # 3. 模型构建
@@ -296,13 +318,10 @@ def main():
         print(" 主损失: Focal + EDL 组合（含类别权重）；数据侧仍配合过采样")
     print(f" 多模态辅助监督: {getattr(Config, 'ENABLE_MULTIMODAL_AUX_LOSS', False)}")
     if getattr(Config, "ENABLE_DOMAIN_CORAL", False):
-        print(
-            f" CORAL 域对齐: 开启 (λ_max={getattr(Config, 'CORAL_LAMBDA_MAX', 0.02)}, "
-            f"warmup_epochs={getattr(Config, 'CORAL_WARMUP_EPOCHS', 8)})，目标域=external 折（无标签损失）"
-        )
+        print(" CORAL 域对齐: 配置为开启，但 v4 协议下训练路径已禁用（避免 external 参与训练）")
     else:
         print(" CORAL 域对齐: 关闭")
-    print(" 选模与存盘: 仅当验证集 ROC-AUC 提升时保存 best_model.pth")
+    print(" 选模与存盘: 仅当【内部验证集 val】ROC-AUC 提升时保存 best_model.pth；external 只终评")
     if use_ema:
         print(f" Model EMA: 开启 (decay={ema_decay})，验证/存盘/导出均使用 EMA 权重")
     else:
@@ -451,15 +470,12 @@ def main():
             )
             break
 
-    # 加载最佳权重，导出 development / external 逐样本概率（供阈值与曲线分析）
+    # 加载最佳权重：导出 train / 内部 val / external（external 仅此一次终评）
     save_path = os.path.join(checkpoints_dir, "best_model.pth")
     if os.path.exists(save_path):
         model.load_state_dict(torch.load(save_path, map_location=device))
-        _, dev_metrics_best = export_split_predictions(
+        export_kwargs = dict(
             model=model,
-            loader=train_loader,
-            source_csv_path=train_csv,
-            split_name='development',
             hospital_name=hospital_name,
             logs_dir=logs_dir,
             device=device,
@@ -472,33 +488,39 @@ def main():
             wma_temperature=wma_temp,
             kl_annealing_epochs=kl_ann,
         )
+        _, train_metrics_best = export_split_predictions(
+            loader=train_loader,
+            source_csv_path=train_csv,
+            split_name='train',
+            **export_kwargs,
+        )
         _, val_metrics_best = export_split_predictions(
-            model=model,
             loader=val_loader,
             source_csv_path=val_csv,
+            split_name='val',
+            **export_kwargs,
+        )
+        _, ext_metrics_best = export_split_predictions(
+            loader=external_loader,
+            source_csv_path=external_csv,
             split_name='external',
-            hospital_name=hospital_name,
-            logs_dir=logs_dir,
-            device=device,
-            use_focal_loss=use_focal_loss,
-            class_weights=class_weights,
-            use_wma=use_wma,
-            train_class_counts=train_class_counts,
-            wma_c=wma_c,
-            wma_warmup_epochs=wma_warmup,
-            wma_temperature=wma_temp,
-            kl_annealing_epochs=kl_ann,
+            **export_kwargs,
         )
 
         print(
-            f"【最佳权重 · 开发集】ROC-AUC={dev_metrics_best['auc_roc']:.4f}  "
-            f"PR-AUC={dev_metrics_best['auc_pr']:.4f}  "
-            f"平衡准确率={dev_metrics_best['balanced_accuracy']:.4f}"
+            f"【最佳权重 · 训练集 train】ROC-AUC={train_metrics_best['auc_roc']:.4f}  "
+            f"PR-AUC={train_metrics_best['auc_pr']:.4f}  "
+            f"平衡准确率={train_metrics_best['balanced_accuracy']:.4f}"
         )
         print(
-            f"【最佳权重 · 外部集】ROC-AUC={val_metrics_best['auc_roc']:.4f}  "
+            f"【最佳权重 · 内部验证 val】ROC-AUC={val_metrics_best['auc_roc']:.4f}  "
             f"PR-AUC={val_metrics_best['auc_pr']:.4f}  "
             f"平衡准确率={val_metrics_best['balanced_accuracy']:.4f}"
+        )
+        print(
+            f"【最佳权重 · 外部终评 external】ROC-AUC={ext_metrics_best['auc_roc']:.4f}  "
+            f"PR-AUC={ext_metrics_best['auc_pr']:.4f}  "
+            f"平衡准确率={ext_metrics_best['balanced_accuracy']:.4f}"
         )
     
     # 保存训练历史（保存到logs目录）
@@ -522,10 +544,10 @@ def main():
         json.dump(serializable_history, f, indent=2)
     print(f"\n 训练历史已保存至: {history_path}")
     
-    # 输出最终总结（best_model.pth 仅与「验证集 ROC-AUC 最高」对齐）
+    # 输出最终总结（best_model.pth 仅与「内部验证集 ROC-AUC 最高」对齐）
     print(f"\n{'='*60}")
     print(f" 训练完成！")
-    print(f"   best_model.pth 对应: 验证集 ROC-AUC 最高 (AUC={best_auc:.4f})")
+    print(f"   best_model.pth 对应: 内部验证集 val ROC-AUC 最高 (AUC={best_auc:.4f})")
     print(f"   全程最高 阳性F1（参考，非选模依据）: {best_f1:.4f}")
     print(f"   全程最高 MCC（参考，非选模依据）: {best_mcc:.4f}")
     print(f"{'='*60}\n")

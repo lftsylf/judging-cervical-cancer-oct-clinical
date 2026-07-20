@@ -202,11 +202,21 @@ git push origin paper-v2-resnet50-oct-baseline
 |------|------|
 | `outputs/第三版/` | 第三版实验结果只读归档（见其中 `README_冻结说明_2026-07-18.md`） |
 | `data/snapshots/paper_v3_tsy_loho/` | 第三版 LOHO CSV 划分快照（见 `README_2026-07-18.md`） |
+| `data/snapshots/paper_v4_tsy_loho/` | **第四版** train/val/external 划分快照（见 `README_2026-07-20.md`） |
 | `outputs/paper_v4/` | 第四版新产物目录（见 `README_2026-07-18.md`） |
 
 **为何仍快照 CSV（即使 v4 会改划分）**
 
 审稿意见要求内部再划 val、外部只终评；划分会变。快照用于：**复现第三版表、审稿对照、防止原地改坏旧名单**。v4 新划分另存 `data/snapshots/paper_v4_*`，勿覆盖 v3 快照。
+
+**v4 划分生成（2026-07-20）**
+
+```bash
+python data/prepare_paper_v4_splits.py --write --split-seed 20260720 --val-ratio 0.2
+```
+
+- 从 `development_*.csv` 按「中心 × 阴阳」分层约 8:2 → `train_*.csv` / `val_*.csv`
+- `external_*.csv` 不改，仅终评；`main.py` 早停看内部 val
 
 **常用命令**
 
