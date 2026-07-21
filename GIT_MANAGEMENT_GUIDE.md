@@ -251,9 +251,12 @@ git push -u origin feature/paper-v4
 | 路径 | 说明 |
 |------|------|
 | `scripts/paper_v4_run/run_b1_mean_edl_t0_oct_only.sh` | B1 T0：mean + 患者级 EDL；内部 val 早停；external 终评 |
+| `scripts/paper_v4_run/run_ours_uw_agg_t0_oct_only.sh` | Ours T0：帧级 EDL + 不确定加权；无 WMA/EMA/Aux |
 | `scripts/paper_v4_run/README_2026-07-20.md` | v4 脚本说明 |
 | `outputs/paper_v4/baseline/b1_mean_edl_t0/` | B1 T0 产物（本地，通常不入库） |
+| `outputs/paper_v4/baseline/ours_uw_agg_t0/` | Ours T0 产物（本地，通常不入库） |
 
 ```bash
 ./run_experiment.sh --detach ./tsy_loho ./scripts/paper_v4_run/run_b1_mean_edl_t0_oct_only.sh
+./run_experiment.sh --detach ./tsy_loho ./scripts/paper_v4_run/run_ours_uw_agg_t0_oct_only.sh
 ```
