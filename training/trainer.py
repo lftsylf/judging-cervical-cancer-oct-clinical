@@ -20,6 +20,88 @@ import numpy as np
 from collections import defaultdict
 from itertools import cycle
 
+def _patient_edl_loss(
+    alpha,
+    y_onehot,
+    epoch,
+    total_epochs,
+    class_weights=None,
+    use_focal=False,
+    use_wma=False,
+    train_class_counts=None,
+    wma_c=0.2,
+    wma_warmup_epochs=10,
+    wma_temperature=1.0,
+    kl_annealing_epochs=10,
+):
+    if use_wma:
+        return wma_loss(
+            alpha,
+            y_onehot,
+            epoch,
+            num_classes=2,
+            n_counts=train_class_counts,
+            c_margin=wma_c,
+            warmup_epochs=wma_warmup_epochs,
+            temperature=wma_temperature,
+            kl_annealing_epochs=kl_annealing_epochs,
+        )
+    if use_focal:
+        return focal_loss_with_edl(
+            alpha, y_onehot, epoch, total_epochs, class_weights=class_weights
+        )
+    return evidence_loss(
+        alpha, y_onehot, epoch, total_epochs, class_weights=class_weights
+    )
+
+
+def _frame_aux_loss(
+    frame_alpha,
+    labels,
+    y_onehot,
+    epoch,
+    total_epochs,
+    class_weights=None,
+    use_focal=False,
+    use_wma=False,
+    train_class_counts=None,
+    wma_c=0.2,
+    wma_warmup_epochs=10,
+    wma_temperature=1.0,
+    kl_annealing_epochs=10,
+    loss_type="edl",
+):
+    """
+    帧级弱监督：每帧共用患者标签。
+    frame_alpha: [B, N, K]
+    """
+    b, n, k = frame_alpha.shape
+    alpha_flat = frame_alpha.reshape(b * n, k)
+    y_flat = y_onehot.unsqueeze(1).expand(-1, n, -1).reshape(b * n, k)
+    labels_flat = labels.unsqueeze(1).expand(-1, n).reshape(b * n)
+
+    if str(loss_type).lower() == "ce":
+        # p = α / Σα，对 log p 做 CE（弱监督，数值上简单）
+        s = alpha_flat.sum(dim=1, keepdim=True).clamp_min(1e-8)
+        log_p = torch.log((alpha_flat / s).clamp_min(1e-8))
+        return F.nll_loss(log_p, labels_flat)
+
+    return _patient_edl_loss(
+        alpha_flat,
+        y_flat,
+        epoch,
+        total_epochs,
+        class_weights=class_weights,
+        use_focal=use_focal,
+        use_wma=use_wma,
+        train_class_counts=train_class_counts,
+        wma_c=wma_c,
+        wma_warmup_epochs=wma_warmup_epochs,
+        wma_temperature=wma_temperature,
+        kl_annealing_epochs=kl_annealing_epochs,
+    )
+
+
 def train_epoch(
     model,
     loader,
@@ -38,6 +120,9 @@ def train_epoch(
     enable_multimodal_aux=False,
     aux_w_vision=0.2,
     aux_w_clinical=0.2,
+    enable_frame_aux=False,
+    frame_aux_weight=0.2,
+    frame_aux_type="edl",
     ema=None,
     uda_target_loader=None,
     lambda_coral_max=0.0,
@@ -46,6 +131,7 @@ def train_epoch(
     model.train()
     running_loss = 0.0
     use_coral = uda_target_loader is not None and float(lambda_coral_max) > 0.0
+    need_frame = bool(enable_frame_aux)
     target_iter = cycle(uda_target_loader) if use_coral else None
     lambda_eff = float(lambda_coral_max) * min(
         1.0, float(epoch + 1) / float(max(1, int(coral_warmup_epochs)))
@@ -64,8 +150,19 @@ def train_epoch(
             imgs_t, clin_t, _ = next(target_iter)
             imgs_t, clin_t = imgs_t.to(device), clin_t.to(device)
 
-        # 前向：得到 alpha，以及可选的 aux / CORAL 用特征
-        if enable_multimodal_aux and use_coral:
+        # 前向：得到 alpha，以及可选的 aux / 帧明细 / CORAL 用特征
+        frame_details = None
+        if enable_multimodal_aux and use_coral and need_frame:
+            alpha, aux_logits_v, aux_logits_c, feat_s, frame_details = model(
+                imgs, clinical, return_aux=True, return_coral_feat=True, return_frame_details=True
+            )
+            _, feat_t = model(imgs_t, clin_t, return_coral_feat=True)
+        elif enable_multimodal_aux and need_frame:
+            alpha, aux_logits_v, aux_logits_c, frame_details = model(
+                imgs, clinical, return_aux=True, return_frame_details=True
+            )
+            feat_s, feat_t = None, None
+        elif enable_multimodal_aux and use_coral:
             alpha, aux_logits_v, aux_logits_c, feat_s = model(
                 imgs, clinical, return_aux=True, return_coral_feat=True
             )
@@ -73,32 +170,40 @@ def train_epoch(
         elif enable_multimodal_aux:
             alpha, aux_logits_v, aux_logits_c = model(imgs, clinical, return_aux=True)
             feat_s, feat_t = None, None
+        elif use_coral and need_frame:
+            alpha, feat_s, frame_details = model(
+                imgs, clinical, return_coral_feat=True, return_frame_details=True
+            )
+            _, feat_t = model(imgs_t, clin_t, return_coral_feat=True)
+            aux_logits_v, aux_logits_c = None, None
         elif use_coral:
             alpha, feat_s = model(imgs, clinical, return_coral_feat=True)
             _, feat_t = model(imgs_t, clin_t, return_coral_feat=True)
             aux_logits_v, aux_logits_c = None, None
+        elif need_frame:
+            alpha, frame_details = model(imgs, clinical, return_frame_details=True)
+            aux_logits_v, aux_logits_c = None, None
+            feat_s, feat_t = None, None
         else:
             alpha = model(imgs, clinical)
             aux_logits_v, aux_logits_c = None, None
             feat_s, feat_t = None, None
         
-        # 损失：按参数在 WMA / Focal+EDL / 纯 EDL 间选择
-        if use_wma:
-            loss = wma_loss(
-                alpha,
-                y_onehot,
-                epoch,
-                num_classes=2,
-                n_counts=train_class_counts,
-                c_margin=wma_c,
-                warmup_epochs=wma_warmup_epochs,
-                temperature=wma_temperature,
-                kl_annealing_epochs=kl_annealing_epochs,
-            )
-        elif use_focal:
-            loss = focal_loss_with_edl(alpha, y_onehot, epoch, total_epochs, class_weights=class_weights)
-        else:
-            loss = evidence_loss(alpha, y_onehot, epoch, total_epochs, class_weights=class_weights)
+        # 患者级主损失
+        loss = _patient_edl_loss(
+            alpha,
+            y_onehot,
+            epoch,
+            total_epochs,
+            class_weights=class_weights,
+            use_focal=use_focal,
+            use_wma=use_wma,
+            train_class_counts=train_class_counts,
+            wma_c=wma_c,
+            wma_warmup_epochs=wma_warmup_epochs,
+            wma_temperature=wma_temperature,
+            kl_annealing_epochs=kl_annealing_epochs,
+        )
         
         # 可选：单模态辅助监督（CE）
         if enable_multimodal_aux:
@@ -109,6 +214,28 @@ def train_epoch(
                 else torch.zeros((), device=device, dtype=loss.dtype)
             )
             loss = loss + float(aux_w_vision) * aux_loss_v + float(aux_w_clinical) * aux_loss_c
+
+        # 可选：帧级弱监督（每帧共用患者标签；非多模态）
+        if need_frame and frame_details is not None:
+            frame_alpha = frame_details.get("frame_alpha")
+            if frame_alpha is not None:
+                floss = _frame_aux_loss(
+                    frame_alpha,
+                    labels,
+                    y_onehot,
+                    epoch,
+                    total_epochs,
+                    class_weights=class_weights,
+                    use_focal=use_focal,
+                    use_wma=use_wma,
+                    train_class_counts=train_class_counts,
+                    wma_c=wma_c,
+                    wma_warmup_epochs=wma_warmup_epochs,
+                    wma_temperature=wma_temperature,
+                    kl_annealing_epochs=kl_annealing_epochs,
+                    loss_type=frame_aux_type,
+                )
+                loss = loss + float(frame_aux_weight) * floss
 
         # 可选：CORAL（无标签目标域 = 外部折，仅用特征统计对齐）
         if use_coral and feat_s is not None and feat_t is not None:

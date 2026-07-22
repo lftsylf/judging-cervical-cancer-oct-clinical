@@ -129,6 +129,15 @@ class Config:
     AUX_LOSS_WEIGHT_VISION = 0.2
     AUX_LOSS_WEIGHT_CLINICAL = 0.2
 
+    # --- 7b. 帧级弱监督（单模态；与 multimodal Aux 无关）---
+    # 仅在 FRAME_AGG=equal / uncertainty_weighted 时生效：每帧共用患者病理标签，
+    # 对帧级 α 加一小权重的 EDL/Focal 或 CE，逼各帧 u 拉开，使不确定加权有意义。
+    # 默认关闭。建议：最终方法 = Ours(uw) + 本项；旧 Ours(无帧损) 作「去掉帧级弱监督」消融。
+    ENABLE_FRAME_AUX_LOSS = _env_bool("OPTIGENESIS_ENABLE_FRAME_AUX", False)
+    FRAME_AUX_LOSS_WEIGHT = _env_float("OPTIGENESIS_FRAME_AUX_WEIGHT", 0.2)
+    # edl：与主损失同族（Focal+EDL 或纯 EDL，随 USE_WMA/focal 开关）；ce：对 p=α/S 做交叉熵
+    FRAME_AUX_LOSS_TYPE = os.getenv("OPTIGENESIS_FRAME_AUX_TYPE", "edl").strip().lower()
+
     # --- 8. Model EMA（轻量消融：开启后每个 step 更新 shadow；验证/选模/存盘/导出均用 EMA 权重）---
     # 默认关闭；仅当 OPTIGENESIS_ENABLE_EMA=1 时开启
     ENABLE_MODEL_EMA = _env_bool("OPTIGENESIS_ENABLE_EMA", False)

@@ -317,6 +317,16 @@ def main():
     else:
         print(" 主损失: Focal + EDL 组合（含类别权重）；数据侧仍配合过采样")
     print(f" 多模态辅助监督: {getattr(Config, 'ENABLE_MULTIMODAL_AUX_LOSS', False)}")
+    enable_frame_aux = bool(getattr(Config, "ENABLE_FRAME_AUX_LOSS", False))
+    frame_aux_w = float(getattr(Config, "FRAME_AUX_LOSS_WEIGHT", 0.2))
+    frame_aux_type = str(getattr(Config, "FRAME_AUX_LOSS_TYPE", "edl"))
+    if enable_frame_aux:
+        print(
+            f" 帧级弱监督: 开启 (weight={frame_aux_w}, type={frame_aux_type})；"
+            f"每帧共用患者标签（单模态，非 clinical Aux）"
+        )
+    else:
+        print(" 帧级弱监督: 关闭")
     if getattr(Config, "ENABLE_DOMAIN_CORAL", False):
         print(" CORAL 域对齐: 配置为开启，但 v4 协议下训练路径已禁用（避免 external 参与训练）")
     else:
@@ -355,6 +365,9 @@ def main():
             enable_multimodal_aux=getattr(Config, 'ENABLE_MULTIMODAL_AUX_LOSS', False),
             aux_w_vision=getattr(Config, 'AUX_LOSS_WEIGHT_VISION', 0.2),
             aux_w_clinical=getattr(Config, 'AUX_LOSS_WEIGHT_CLINICAL', 0.2),
+            enable_frame_aux=enable_frame_aux,
+            frame_aux_weight=frame_aux_w,
+            frame_aux_type=frame_aux_type,
             ema=ema,
             uda_target_loader=uda_target_loader,
             lambda_coral_max=(
