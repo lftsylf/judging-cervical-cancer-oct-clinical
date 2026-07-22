@@ -75,6 +75,11 @@ class Config:
     FRAME_AGG_MODE = os.getenv("OPTIGENESIS_FRAME_AGG", "uncertainty_weighted").strip().lower()
     # 加权温度 τ：越小越「只信最确定的几帧」；越大越接近等权
     FRAME_AGG_TEMPERATURE = _env_float("OPTIGENESIS_FRAME_AGG_TEMP", 0.5)
+    # 帧权重信号（仅 FRAME_AGG=uncertainty_weighted 时生效）：
+    #   edl_u   : softmax((1−u)/τ)，u=K/Σα（默认，历史 UW）
+    #   maxprob : softmax(max_k p_k / τ)，p=α/Σα
+    #   negent  : softmax((−H − mean(−H))/τ)，H 为帧预测熵
+    FRAME_WEIGHT_SIGNAL = os.getenv("OPTIGENESIS_FRAME_WEIGHT_SIGNAL", "edl_u").strip().lower()
     # 每例患者导出不确定度最高的 top-k 帧下标，供人工复核
     FRAME_REVIEW_TOP_K = _env_int("OPTIGENESIS_FRAME_REVIEW_TOP_K", 3)
     

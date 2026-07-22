@@ -271,9 +271,11 @@ def main():
     frame_agg_mode = getattr(Config, "FRAME_AGG_MODE", "uncertainty_weighted")
     frame_agg_temp = float(getattr(Config, "FRAME_AGG_TEMPERATURE", 0.5))
     frame_review_k = int(getattr(Config, "FRAME_REVIEW_TOP_K", 3))
+    frame_weight_signal = getattr(Config, "FRAME_WEIGHT_SIGNAL", "edl_u")
     print(
         f"【构建模型】骨干网络: {Config.BACKBONE}  |  临床特征融合: {Config.USE_CLINICAL}  |  "
-        f"帧聚合: {frame_agg_mode} (τ={frame_agg_temp}, review_top_k={frame_review_k})"
+        f"帧聚合: {frame_agg_mode} (signal={frame_weight_signal}, τ={frame_agg_temp}, "
+        f"review_top_k={frame_review_k})"
     )
     model = OptiGenesis(
         model_name=Config.BACKBONE,
@@ -282,6 +284,7 @@ def main():
         frame_agg_mode=frame_agg_mode,
         agg_temperature=frame_agg_temp,
         review_top_k=frame_review_k,
+        weight_signal=frame_weight_signal,
     ).to(device)
     
     freeze_backbone_epochs = int(getattr(Config, "FREEZE_BACKBONE_EPOCHS", 0) or 0)

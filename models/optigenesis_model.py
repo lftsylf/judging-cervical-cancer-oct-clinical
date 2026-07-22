@@ -19,6 +19,7 @@ class OptiGenesis(nn.Module):
     """
 
     AGG_MODES = ("mean", "equal", "uncertainty_weighted")
+    WEIGHT_SIGNALS = ("edl_u", "maxprob", "negent")
 
     def __init__(
         self,
@@ -28,6 +29,7 @@ class OptiGenesis(nn.Module):
         frame_agg_mode="uncertainty_weighted",
         agg_temperature=0.5,
         review_top_k=3,
+        weight_signal="edl_u",
     ):
         super().__init__()
         self.use_clinical = use_clinical
@@ -40,10 +42,18 @@ class OptiGenesis(nn.Module):
             )
         self.agg_temperature = float(agg_temperature)
         self.review_top_k = int(review_top_k)
+        self.weight_signal = str(weight_signal).strip().lower()
+        if self.weight_signal not in self.WEIGHT_SIGNALS:
+            raise ValueError(
+                f"weight_signal 必须是 {self.WEIGHT_SIGNALS} 之一，收到: {weight_signal}"
+            )
 
         # 1. 视觉基座（timm；num_classes=0 去掉分类头，前向得到全局池化后的特征向量）
         print(f"🔍 正在加载视觉 backbone: {model_name}")
-        print(f"   帧聚合模式 frame_agg_mode={self.frame_agg_mode}")
+        print(
+            f"   帧聚合模式 frame_agg_mode={self.frame_agg_mode} | "
+            f"weight_signal={self.weight_signal} | τ={self.agg_temperature}"
+        )
         self.vision_backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
         self.vision_dim = self.vision_backbone.num_features
 
@@ -135,9 +145,21 @@ class OptiGenesis(nn.Module):
             # 消融：知道每帧不确定，但聚合仍等权
             frame_w = torch.full((b, n), 1.0 / float(n), device=alpha_frame.device, dtype=alpha_frame.dtype)
         else:
-            # uncertainty_weighted：置信度 (1−u) 越高权重越大
-            confidence = (1.0 - frame_u).clamp(min=0.0)
-            frame_w = F.softmax(confidence / tau, dim=1)  # [B, N]
+            # uncertainty_weighted：按 weight_signal 打分再 softmax(/τ)
+            if self.weight_signal == "maxprob":
+                s = torch.sum(alpha_frame, dim=-1, keepdim=True).clamp_min(1e-8)
+                p = alpha_frame / s
+                score = p.max(dim=-1).values  # [B, N]
+            elif self.weight_signal == "negent":
+                s = torch.sum(alpha_frame, dim=-1, keepdim=True).clamp_min(1e-8)
+                p = (alpha_frame / s).clamp_min(1e-8)
+                ent = -(p * p.log()).sum(dim=-1)  # [B, N]
+                score = -ent
+                score = score - score.mean(dim=1, keepdim=True)
+            else:
+                # edl_u（默认）：置信度 (1−u)
+                score = (1.0 - frame_u).clamp(min=0.0)
+            frame_w = F.softmax(score / tau, dim=1)  # [B, N]
 
         w = frame_w.unsqueeze(-1)  # [B, N, 1]
         alpha = torch.sum(w * alpha_frame, dim=1)  # [B, K]

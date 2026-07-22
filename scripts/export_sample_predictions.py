@@ -82,6 +82,7 @@ def main():
         frame_agg_mode=getattr(Config, "FRAME_AGG_MODE", "uncertainty_weighted"),
         agg_temperature=float(getattr(Config, "FRAME_AGG_TEMPERATURE", 0.5)),
         review_top_k=int(getattr(Config, "FRAME_REVIEW_TOP_K", 3)),
+        weight_signal=getattr(Config, "FRAME_WEIGHT_SIGNAL", "edl_u"),
     ).to(device)
     model.load_state_dict(torch.load(ckpt, map_location=device))
 
