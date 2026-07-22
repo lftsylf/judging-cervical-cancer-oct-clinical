@@ -38,9 +38,10 @@
 
 1. **停止**继续盲扫 FrameAux weight。
 2. AUC 主候选暂定 **edl@0.3**（须诚实报告 \(n_{\mathrm{eff}}\)）。
-3. **推理锐化诊断已完成**（`DIAG_uw_inference_sharpen_edl03.md`）：固定 edl@0.3 权重，扫 τ∈{0.5…0.001} 与 top-k∈{6,3,1}。
-   - n_eff 可被拉开（τ=0.01≈8.5；topk 强制 =k），但外部 ROC **全部 ≤ τ=0.5**，越尖越差。
-   - 结论：EDL 帧 \(u\) **可拉开权重但无判别信息** → 勿改默认 τ；下一优先换权重定义 / 监督 / 可学习注意力。
+3. **推理锐化已完成**（`DIAG_uw_inference_sharpen_edl03.md`）：尖 τ / top-k-by-u 拉开 n_eff 但伤 AUC。
+4. **换权重后处理 B 已完成**（`DIAG_uw_alt_weight_signals_edl03.md`）：与 CSV 对齐全过；
+   外部最高 ~0.593（negent/topk3-maxprob），但 **val 同步下降** → 按诚实协议不可选；
+   唯一同向微升 maxprob_τ0.5（~+0.002/+0.004）。下一优先：**重训** 可学习注意力（D）或改监督（C）。
 
 详见：`HANDOFF_NEXT_AGENT.md` / `HANDOFF_NEXT_AGENT26-7-22.md`
 
