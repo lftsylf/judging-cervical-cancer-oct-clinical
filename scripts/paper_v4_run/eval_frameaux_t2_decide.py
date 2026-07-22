@@ -58,8 +58,8 @@ def main():
     ap.add_argument("--candidate-root", required=True, help="刚跑完的 T2 输出根目录")
     ap.add_argument(
         "--ref-root",
-        default="outputs/paper_v4/baseline/ours_uw_frameaux_t2",
-        help="对照：edl@0.2 Full T2",
+        default="outputs/paper_v4/baseline/测试t2/ours_uw_frameaux_t2",
+        help="对照：edl@0.2 Full T2（CSV 在 测试t2/ 下）",
     )
     ap.add_argument(
         "--gap-threshold",
