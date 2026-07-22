@@ -38,7 +38,9 @@
 
 1. **停止**继续盲扫 FrameAux weight。
 2. AUC 主候选暂定 **edl@0.3**（须诚实报告 \(n_{\mathrm{eff}}\)）。
-3. 下一优先：推理侧 \(\tau\)/top-k 诊断 → 改 \(u\) 定义 / 注意力 / 监督，让 UW 真正生效。
+3. **推理锐化诊断已完成**（`DIAG_uw_inference_sharpen_edl03.md`）：固定 edl@0.3 权重，扫 τ∈{0.5…0.001} 与 top-k∈{6,3,1}。
+   - n_eff 可被拉开（τ=0.01≈8.5；topk 强制 =k），但外部 ROC **全部 ≤ τ=0.5**，越尖越差。
+   - 结论：EDL 帧 \(u\) **可拉开权重但无判别信息** → 勿改默认 τ；下一优先换权重定义 / 监督 / 可学习注意力。
 
 详见：`HANDOFF_NEXT_AGENT.md` / `HANDOFF_NEXT_AGENT26-7-22.md`
 

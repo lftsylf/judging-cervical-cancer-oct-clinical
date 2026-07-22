@@ -2,8 +2,8 @@
 
 > 用户可把下文整段粘贴给新对话。上一轮完整对话：  
 > `agent-transcripts/273d4c39-3d47-49e7-b97d-6317037ec8cb`  
-> 仓库内本文件：`scripts/paper_v4_run/HANDOFF_NEXT_AGENT26-7-22.md`  
-> 同内容副本：`scripts/paper_v4_run/HANDOFF_NEXT_AGENT.md`
+> 仓库内本文件：`scripts/paper_v4_run/HANDOFF_NEXT_AGENT.md`  
+> 带日期副本：`scripts/paper_v4_run/HANDOFF_NEXT_AGENT26-7-22.md`（内容同步）
 
 ---
 
@@ -134,41 +134,54 @@ ce 判决 JSON：`outputs/paper_v4/baseline/AUTO_PROBE_decision_ce.json`
 
 ## 你接手后的第一步（按顺序）
 
-1. **FrameAux 权重网格已结束**：edl@0.2 / 0.3 / 0.5 / ce@0.2 都有数；**不要再盲扫** 0.1/0.4/0.6…。
-2. **AUC 主候选暂定 edl@0.3**（均值 0.577），但必须在文中诚实写清：\(n_{\mathrm{eff}}\approx12\)。
-3. **下一优先：让加权真正拉开**（见下节）。先做便宜的**推理锐化诊断**（固定 edl@0.3 或 edl@0.2 权重，只改 \(\tau\) / top-k）。
-4. 大改前先征得用户同意；中文给简表 + 结论。
+1. **FrameAux 权重网格已结束**；**推理锐化诊断（A/E）已完成** → 见 `DIAG_uw_inference_sharpen_edl03.md`。
+2. **AUC 主候选仍是 edl@0.3**（均值 0.577，默认 τ=0.5）；**不要**把默认 τ 改尖（会伤 AUC）。
+3. **下一优先：B / C / D**（换权重信号、改监督、或可学习注意力）。大改前先征得用户同意。
+4. 中文给简表 + 结论；commit 用中文 message。
 
 ---
 
-## 让加权生效的方向（优先序）
+## 推理锐化诊断结果（2026-07-22，已完成）
 
-现状根因：帧 EDL 的 \(u\) 几乎常数 → softmax 近均匀。调 `FRAME_AUX_WEIGHT` 治不好。
+脚本：`scripts/paper_v4_run/diag_uw_inference_sharpen.py`  
+报告：`scripts/paper_v4_run/DIAG_uw_inference_sharpen_edl03.md`  
+（固定 edl@0.3 `best_model.pth`，一次前向取帧 α，离线扫 τ / top-k；τ=0.5 与 CSV ROC 完全对齐。）
 
-**A. 温度 / 锐化（改动小，先探）**
-- 降 \(\tau\)（如 0.1 / 0.05）使微小 \(u\) 差也被放大；或推理时用更尖的温度。
-- 风险：若 \(u\) 真无差，锐化也无效；可能数值不稳。
+| 模式 | 外部 ROC 均值 | Δ vs τ=0.5 | n_eff |
+|------|-------------:|-----------:|------:|
+| τ=0.5（训练默认） | **0.577** | 0 | ≈12.0 |
+| τ=0.1 / 0.05 | 0.574 / 0.572 | −0.003 / −0.005 | ≈11.9 / 11.7 |
+| τ=0.01 | 0.552 | −0.025 | ≈8.5 |
+| τ=0.001 | 0.515 | −0.062 | ≈1.6 |
+| top-k=6 / 3 / 1 | 0.560 / 0.535 / 0.512 | −0.017 / −0.042 / −0.065 | =k |
 
-**B. 换不确定度 / 权重定义**
-- 不用 Dirichlet \(u=K/S\)，改用：预测熵、最大概率、方差、或「帧特征与患者均值的距离」。
-- top-k / sparsemax / 硬阈值：只保留置信最高的 k 帧再聚合。
+**判读：** 锐化能拉开权重，但按 EDL \(u\) 排序的帧**没有更好的判别信息**（ROC 单调变差）。单靠温度 / top-k **救不了 UW**。
+
+---
+
+## 让加权生效的方向（优先序 · 更新）
+
+现状根因（已证实）：帧 EDL \(u\) 虽可被锐化拉开，但 **\(u\) 排序与「该信哪帧」不对齐**。调 `FRAME_AUX_WEIGHT` / 推理 τ 都治不好。
+
+**A. 温度 / 锐化 — 已做完，否定**
+- 勿再扫 τ；勿改默认推理温度为更尖值。
+
+**B. 换不确定度 / 权重定义（下一优先探）**
+- 不用 Dirichlet \(u=K/S\)，改用：预测熵、最大概率、帧特征与患者均值距离、或帧级 logit 方差。
+- 可先做**推理后处理**对照（固定 edl@0.3 权重，换权重公式重聚合）——与锐化脚本同套路，便宜。
 
 **C. 让帧预测真正分化（监督侧）**
-- 仅患者标签广播 → 所有帧被推向同一决策，**鼓励 u 同质化**。
-- 可选：对比/多样性正则；帧间一致性损失的反向（鼓励分歧）；或伪标签/注意力监督；或只对部分帧加 aux。
-- 更强：引入真正的帧级标注 / 弱定位（若有数据）。
+- 仅患者标签广播 → 鼓励 u 同质化（已观察到）。
+- 可选：多样性正则 / 只对部分帧加 aux / 伪标签；更强则需真帧级标注。
 
 **D. 架构侧**
-- 可学习帧注意力（query=患者全局），与 EDL-u 解耦；u 只用于校准/拒识，不强制做唯一加权源。
-- 或：UW 只作推理后处理，训练仍 mean/equal（避免训练把 u 压平）。
-
-**E. 诊断实验（必做、便宜）**
-- 固定已训好的 **edl@0.3**（或 edl@0.2）权重，**只改推理** \(\tau\) / top-k，看 \(n_{\mathrm{eff}}\) 与 AUC 是否动。  
-  → 若仍不动，说明 \(u\) 本身无信息，必须改监督或特征，而非再扫 loss weight。
+- 可学习帧注意力（与 EDL-u 解耦）；u 只用于校准/拒识。
+- 或：训练 mean/equal，UW 仅推理后处理。
 
 **明确不要再做的：**
-- 继续盲扫 FrameAux weight 指望拉开 \(u\)
+- 继续盲扫 FrameAux weight / 推理 τ 指望拉开「有用的」\(u\)
 - 把 WMA/EMA/多模态 Aux 当主修复
+- 把 top-k-by-u 当主方法（已证伤 AUC）
 
 ---
 
@@ -185,6 +198,7 @@ ce 判决 JSON：`outputs/paper_v4/baseline/AUTO_PROBE_decision_ce.json`
 
 - `scripts/paper_v4_run/README_2026-07-20.md`
 - `scripts/paper_v4_run/RESULTS_T2_frameaux_2026-07-22.md`
+- `scripts/paper_v4_run/DIAG_uw_inference_sharpen_edl03.md`
 - `GIT_MANAGEMENT_GUIDE.md`
 - v3 冻结只读：`outputs/第三版/`、`data/snapshots/paper_v3_tsy_loho/`；tag `paper-v3-muse-full`
 
@@ -192,4 +206,4 @@ ce 判决 JSON：`outputs/paper_v4/baseline/AUTO_PROBE_decision_ce.json`
 
 ## 一句话现状
 
-诚实协议已通；FrameAux 网格结束。**AUC 最好：edl@0.3（外部均值 ≈0.577，Δ vs 0.2 ≈+0.022）**，但 **\(n_{\mathrm{eff}}\approx12\) UW 仍未生效**。下一任：**停止权重网格** → 推理锐化诊断 → 再改 \(u\)/注意力/监督，让加权真正工作。
+诚实协议已通；FrameAux 网格结束；**推理锐化已证伪「尖 τ 救命」**。AUC 最好仍是 **edl@0.3 @ τ=0.5（≈0.577）**，但 UW 按 EDL-\(u\) **无有效信息**。下一任：征得同意后做 **B（换权重信号，可先推理后处理）** 或 **D（可学习注意力）**。
