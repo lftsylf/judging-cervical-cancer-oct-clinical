@@ -25,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from configs.lancet_config import Config  # noqa: E402
-from data.dataset_lancet import get_dataloader  # noqa: E402
+from data.dataset_lancet import get_dataloader, unpack_loader_batch  # noqa: E402
 from models.optigenesis_model import OptiGenesis  # noqa: E402
 
 HOSPITALS = ("huaxi", "liaoning", "xiangya")
@@ -84,14 +84,18 @@ def collect_frame_alphas(model, loader, device) -> tuple[torch.Tensor, np.ndarra
     alphas = []
     ys = []
     with torch.no_grad():
-        for imgs, clinical, labels in loader:
+        for batch in loader:
+            imgs, clinical, labels, frame_mask = unpack_loader_batch(batch)
             imgs = imgs.to(device)
             clinical = clinical.to(device)
+            frame_mask = frame_mask.to(device)
             # 直接走帧级路径拿 alpha_frame
             b, n_images, c, h, w = imgs.shape
             img_flat = imgs.view(b * n_images, c, h, w)
             v_feat = model.vision_backbone(img_flat).view(b, n_images, -1)
-            alpha_frame, _, _, _ = model._frame_alphas_and_features(v_feat, clinical)
+            alpha_frame, _, _, _ = model._frame_alphas_and_features(
+                v_feat, clinical, frame_mask=frame_mask
+            )
             alphas.append(alpha_frame.cpu())
             ys.append(labels.numpy())
     return torch.cat(alphas, dim=0), np.concatenate(ys, axis=0)

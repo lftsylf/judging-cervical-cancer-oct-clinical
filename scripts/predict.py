@@ -13,7 +13,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from configs.lancet_config import Config
-from data.dataset_lancet import LancetMultiCenterDataset, get_dataloader
+from data.dataset_lancet import LancetMultiCenterDataset, get_dataloader, collate_patient_frames, unpack_loader_batch
 from models.optigenesis_model import OptiGenesis
 from torchvision import transforms
 
@@ -26,11 +26,14 @@ def predict(model, loader, device):
     oct_ids = []
     
     with torch.no_grad():
-        for batch_idx, (imgs, clinical, labels) in enumerate(loader):
-            imgs, clinical = imgs.to(device), clinical.to(device)
+        for batch in loader:
+            imgs, clinical, labels, frame_mask = unpack_loader_batch(batch)
+            imgs = imgs.to(device)
+            clinical = clinical.to(device)
+            frame_mask = frame_mask.to(device)
             
             # 获取OCT_ID（需要从数据集中获取）
-            alpha = model(imgs, clinical)
+            alpha = model(imgs, clinical, frame_mask=frame_mask)
             
             # 计算预测概率
             S = torch.sum(alpha, dim=1, keepdim=True)
@@ -62,7 +65,8 @@ def load_predict_data(csv_path):
         batch_size=1,
         shuffle=False,
         num_workers=0,
-        pin_memory=False
+        pin_memory=False,
+        collate_fn=collate_patient_frames,
     )
     
     return loader, dataset

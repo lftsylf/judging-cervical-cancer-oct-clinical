@@ -35,13 +35,122 @@ class StrongAugmentation:
         
         return img
 
+
+def _gray_or_rgb_to_pil(page: np.ndarray) -> Image.Image:
+    """把单页 numpy 转为 RGB PIL。"""
+    arr = np.asarray(page)
+    if arr.ndim == 3 and arr.shape[-1] in (3, 4):
+        if arr.shape[-1] == 4:
+            arr = arr[..., :3]
+        if arr.dtype != np.uint8:
+            arr = np.clip(arr, 0, 255).astype(np.uint8) if arr.max() > 1.5 else (
+                np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+            )
+        return Image.fromarray(arr, mode="RGB")
+    if arr.ndim == 3 and arr.shape[0] in (1, 3, 4):
+        # CHW
+        arr = np.transpose(arr, (1, 2, 0))
+        return _gray_or_rgb_to_pil(arr)
+    # 灰度 HxW
+    if arr.dtype != np.uint8:
+        arr = np.clip(arr, 0, 255).astype(np.uint8) if arr.max() > 1.5 else (
+            np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+        )
+    return Image.fromarray(arr, mode="L").convert("RGB")
+
+
+def _split_tiff_array_to_pages(arr: np.ndarray) -> list:
+    """
+    将 tifffile 读入的数组拆成页列表。
+    本数据集常见：(P,H,W) 灰度多页；也兼容单页 (H,W) / (H,W,C)。
+    """
+    arr = np.asarray(arr)
+    if arr.ndim == 2:
+        return [arr]
+    if arr.ndim == 3:
+        # HxWxC
+        if arr.shape[-1] in (1, 3, 4) and arr.shape[0] >= 64 and arr.shape[1] >= 64:
+            return [arr]
+        # PHW（时序/多页在第 0 维）
+        return [arr[i] for i in range(arr.shape[0])]
+    if arr.ndim == 4:
+        # P H W C
+        return [arr[i] for i in range(arr.shape[0])]
+    return [arr]
+
+
+def load_tiff_as_pil_pages(img_path: str, expand_pages: bool, max_pages: int = 0) -> list:
+    """
+    读取一个 TIFF：
+      - expand_pages=False：只取第 1 页（历史行为，与旧实验可比）
+      - expand_pages=True ：取全部时序页（辽宁≈5，华西/湘雅≈10）
+    """
+    if not expand_pages:
+        return [Image.open(img_path).convert("RGB")]
+
+    pages = []
+    try:
+        import tifffile
+
+        arr = tifffile.imread(img_path)
+        pages = [_gray_or_rgb_to_pil(p) for p in _split_tiff_array_to_pages(arr)]
+    except Exception:
+        pages = []
+        try:
+            im = Image.open(img_path)
+            n = int(getattr(im, "n_frames", 1) or 1)
+            for i in range(n):
+                try:
+                    im.seek(i)
+                    pages.append(im.convert("RGB").copy())
+                except Exception:
+                    break
+        except Exception:
+            pages = []
+
+    if not pages:
+        pages = [Image.new("RGB", (Config.IMG_SIZE, Config.IMG_SIZE), (0, 0, 0))]
+
+    if max_pages and max_pages > 0:
+        pages = pages[: int(max_pages)]
+    return pages
+
+
+def _black_tensor(transform) -> torch.Tensor:
+    if transform:
+        image = Image.new("RGB", (Config.IMG_SIZE, Config.IMG_SIZE), (0, 0, 0))
+        return transform(image).contiguous()
+    image = Image.new("RGB", (224, 224), (0, 0, 0))
+    return transforms.ToTensor()(image)
+
+
+def collate_patient_frames(batch):
+    """
+    将变长帧序列 pad 到 batch 内最大 N，并返回 frame_mask（1=有效帧，0=padding）。
+    返回: imgs [B,N,C,H,W], clinical [B,3], labels [B], frame_mask [B,N]
+    """
+    imgs, clinicals, labels = zip(*batch)
+    max_n = max(int(x.shape[0]) for x in imgs)
+    b = len(imgs)
+    _, c, h, w = imgs[0].shape
+    out = imgs[0].new_zeros((b, max_n, c, h, w))
+    mask = imgs[0].new_zeros((b, max_n))
+    for i, x in enumerate(imgs):
+        n = int(x.shape[0])
+        out[i, :n] = x
+        mask[i, :n] = 1.0
+    clinical = torch.stack(clinicals, dim=0)
+    label_t = torch.stack(labels, dim=0)
+    return out.contiguous(), clinical, label_t, mask
+
+
 class LancetMultiCenterDataset(Dataset):
     def __init__(self, csv_path, mode='train', transform=None, oversample_positive=True):
         """
-        Args:
+        参数:
             csv_path: CSV 文件路径
-            mode: 'train', 'val', 'external_test'
-            oversample_positive: 是否对阳性样本进行过采样
+            mode: 'train' / 'val' / 'external_test'
+            oversample_positive: 训练时是否配合采样器对阳性过采样
         """
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"CSV文件未找到: {csv_path}")
@@ -50,6 +159,8 @@ class LancetMultiCenterDataset(Dataset):
         self.mode = mode
         self.transform = transform
         self.oversample_positive = oversample_positive and (mode == 'train')
+        self.expand_tiff_pages = bool(getattr(Config, "EXPAND_TIFF_PAGES", False))
+        self.max_pages_per_tiff = int(getattr(Config, "MAX_PAGES_PER_TIFF", 0) or 0)
         
         # 简单清洗: 必须有病理标签
         self.df = self.df.dropna(subset=['pathology_class'])
@@ -63,76 +174,73 @@ class LancetMultiCenterDataset(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         
-        # --- 1. 图像处理（多图像融合）---
-        # 读取图像文件夹路径
+        # --- 1. 图像处理（多点位 TIFF；可选展开每文件全部时序页）---
         img_folder = os.path.join(Config.DATA_ROOT, row['image_folder'])
         
-        # 获取所有TIFF图像文件
-        tiff_files = sorted([f for f in os.listdir(img_folder) if f.endswith('.tiff')])
+        tiff_files = sorted(
+            [
+                f
+                for f in os.listdir(img_folder)
+                if f.lower().endswith(".tiff") or f.lower().endswith(".tif")
+            ]
+        )
         
         images = []
         for tiff_file in tiff_files:
             img_path = os.path.join(img_folder, tiff_file)
             try:
-                image = Image.open(img_path).convert('RGB')
-                # ⚠️ 关键：transform在每次调用时执行，确保在线随机增强
-                # 即使同一个样本被WeightedRandomSampler重复采样，
-                # 每次都会得到不同的增强版本（防止过拟合）
-                if self.transform:
-                    image = self.transform(image).contiguous() # 解决张量不可调整大小的问题
-                images.append(image)
-            except Exception as e:
-                # 如果读取失败，使用全黑图代替
-                if self.transform:
-                    image = Image.new('RGB', (Config.IMG_SIZE, Config.IMG_SIZE), (0, 0, 0))
-                    image = self.transform(image)
-                else:
-                    image = Image.new('RGB', (224, 224), (0, 0, 0))
-                    image = transforms.ToTensor()(image)
-                images.append(image)
+                pil_pages = load_tiff_as_pil_pages(
+                    img_path,
+                    expand_pages=self.expand_tiff_pages,
+                    max_pages=self.max_pages_per_tiff,
+                )
+                for image in pil_pages:
+                    # ⚠️ 关键：transform 每次 __getitem__ 在线随机增强
+                    if self.transform:
+                        images.append(self.transform(image).contiguous())
+                    else:
+                        images.append(transforms.ToTensor()(image))
+            except Exception:
+                images.append(_black_tensor(self.transform))
         
-        # 如果没有图像，创建一个全黑图
         if len(images) == 0:
-            if self.transform:
-                image = Image.new('RGB', (Config.IMG_SIZE, Config.IMG_SIZE), (0, 0, 0))
-                image = self.transform(image)
-            else:
-                image = Image.new('RGB', (224, 224), (0, 0, 0))
-                image = transforms.ToTensor()(image)
-            images.append(image)
+            images.append(_black_tensor(self.transform))
         
-        # 将多个图像堆叠成张量 [N, C, H, W]
-        images_tensor = torch.stack(images)  # [N_images, 3, H, W]
-        
-        # 解决 "Trying to resize storage that is not resizable" 错误
-        # 确保张量在内存中是连续的，以便 DataLoader 可以正确地将其批处理
-        images_tensor = images_tensor.contiguous()
+        # [N, C, H, W]；展开后辽宁≈60、华西/湘雅≈120；未展开≈12
+        images_tensor = torch.stack(images).contiguous()
 
         # --- 2. 临床特征 (HPV, TCT, Age) ---
-        # Fix for NaN Loss: Handle NaN values in CSV safely
         def get_safe_float(val, default):
             try:
                 if pd.isna(val) or val == '' or str(val).strip().lower() == 'nan':
                     return float(default)
                 return float(val)
-            except:
+            except Exception:
                 return float(default)
 
-        # Age 归一化 (假设平均45岁, std 15)
         age = (get_safe_float(row.get('age'), 45) - 45.0) / 15.0
-        # HPV (0/1)
         hpv = get_safe_float(row.get('hpv_status'), 0)
-        # TCT (数值)
         tct = get_safe_float(row.get('tct_result'), 0)
         
         clinical_vec = torch.tensor([age, hpv, tct], dtype=torch.float32)
         
-        # --- 3. 标签 ---
-        # 注意：对于Final_Label，0/1直接映射，不需要>=2的判断
         label = int(row.get('pathology_class', 0))
         label = torch.tensor(label, dtype=torch.long)
         
         return images_tensor, clinical_vec, label
+
+
+def unpack_loader_batch(batch):
+    """兼容旧三元组与新四元组 (imgs, clinical, labels[, frame_mask])。"""
+    if len(batch) == 4:
+        return batch[0], batch[1], batch[2], batch[3]
+    if len(batch) == 3:
+        imgs, clinical, labels = batch
+        b, n = imgs.shape[0], imgs.shape[1]
+        mask = torch.ones(b, n, device=imgs.device, dtype=imgs.dtype)
+        return imgs, clinical, labels, mask
+    raise ValueError(f"意外的 batch 长度: {len(batch)}")
+
 
 def get_dataloader(csv_path, mode='train', seed=None):
     """
@@ -192,6 +300,20 @@ def get_dataloader(csv_path, mode='train', seed=None):
         ])
 
     dataset = LancetMultiCenterDataset(csv_path, mode=mode, transform=transform, oversample_positive=True)
+
+    expand = bool(getattr(Config, "EXPAND_TIFF_PAGES", False))
+    max_pages = int(getattr(Config, "MAX_PAGES_PER_TIFF", 0) or 0)
+    if expand:
+        print(
+            f"📽️ [Data] TIFF 全时序展开已开启 "
+            f"(EXPAND_TIFF_PAGES=1, MAX_PAGES_PER_TIFF={max_pages or '不截断'})；"
+            f"辽宁≈60 帧/人，华西/湘雅≈120；batch 内 pad + frame_mask"
+        )
+        if int(getattr(Config, "BATCH_SIZE", 4)) > 2:
+            print(
+                f"⚠️ [Data] 当前 BATCH_SIZE={Config.BATCH_SIZE}，展开多页后易 OOM，"
+                f"建议 export OPTIGENESIS_BATCH_SIZE=1 或 2"
+            )
     
     # --- 核心策略: 训练集使用加权采样解决不平衡 ---
     sampler = None
@@ -235,6 +357,7 @@ def get_dataloader(csv_path, mode='train', seed=None):
         pin_memory=True,
         worker_init_fn=worker_init_fn,
         generator=generator,
+        collate_fn=collate_patient_frames,
     )
     
     return loader

@@ -96,19 +96,27 @@ class OptiGenesis(nn.Module):
         s = torch.sum(alpha, dim=-1).clamp_min(1e-8)
         return float(k) / s
 
-    def _frame_alphas_and_features(self, v_feat: torch.Tensor, clinical: torch.Tensor):
+    def _frame_alphas_and_features(
+        self, v_feat: torch.Tensor, clinical: torch.Tensor, frame_mask: torch.Tensor | None = None
+    ):
         """
         逐帧：特征 →（可选临床拼接）→ fusion → EDL α。
 
         v_feat: [B, N, Dv]
+        frame_mask: [B, N]，1=有效帧（展开多页后 batch pad 用）
         返回:
             alpha_frame: [B, N, K]
             feat_fused:  [B, N, 256]
             c_feat:      [B, 64] 或 None
-            v_feat_patient: [B, Dv]  （等权均值，供 Aux 使用）
+            v_feat_patient: [B, Dv]  （mask 加权均值，供 Aux 使用）
         """
         b, n, _ = v_feat.shape
-        v_feat_patient = torch.mean(v_feat, dim=1)
+        if frame_mask is None:
+            v_feat_patient = torch.mean(v_feat, dim=1)
+        else:
+            m = frame_mask.to(dtype=v_feat.dtype).unsqueeze(-1)  # [B,N,1]
+            denom = m.sum(dim=1).clamp_min(1.0)
+            v_feat_patient = (v_feat * m).sum(dim=1) / denom
 
         if self.use_clinical:
             c_feat = self.clinical_mlp(clinical)  # [B, 64]
@@ -126,7 +134,10 @@ class OptiGenesis(nn.Module):
         return alpha_frame, feat_fused, c_feat, v_feat_patient
 
     def _aggregate_frame_alphas(
-        self, alpha_frame: torch.Tensor, feat_fused: torch.Tensor
+        self,
+        alpha_frame: torch.Tensor,
+        feat_fused: torch.Tensor,
+        frame_mask: torch.Tensor | None = None,
     ):
         """
         由帧级 α / 特征得到患者级 α 与融合特征。
@@ -140,10 +151,19 @@ class OptiGenesis(nn.Module):
         frame_u = self._dirichlet_uncertainty(alpha_frame)  # [B, N]
         b, n, _ = alpha_frame.shape
         tau = max(float(self.agg_temperature), 1e-6)
+        mask = None
+        if frame_mask is not None:
+            mask = frame_mask.to(dtype=alpha_frame.dtype)
+            # padding 帧不确定度置 0，避免 review/导出误导
+            frame_u = frame_u * mask
 
         if self.frame_agg_mode == "equal":
-            # 消融：知道每帧不确定，但聚合仍等权
-            frame_w = torch.full((b, n), 1.0 / float(n), device=alpha_frame.device, dtype=alpha_frame.dtype)
+            if mask is None:
+                frame_w = torch.full(
+                    (b, n), 1.0 / float(n), device=alpha_frame.device, dtype=alpha_frame.dtype
+                )
+            else:
+                frame_w = mask / mask.sum(dim=1, keepdim=True).clamp_min(1.0)
         else:
             # uncertainty_weighted：按 weight_signal 打分再 softmax(/τ)
             if self.weight_signal == "maxprob":
@@ -155,21 +175,37 @@ class OptiGenesis(nn.Module):
                 p = (alpha_frame / s).clamp_min(1e-8)
                 ent = -(p * p.log()).sum(dim=-1)  # [B, N]
                 score = -ent
-                score = score - score.mean(dim=1, keepdim=True)
+                if mask is None:
+                    score = score - score.mean(dim=1, keepdim=True)
+                else:
+                    # 仅在有效帧上减均值
+                    msum = mask.sum(dim=1, keepdim=True).clamp_min(1.0)
+                    mean = (score * mask).sum(dim=1, keepdim=True) / msum
+                    score = score - mean
             else:
                 # edl_u（默认）：置信度 (1−u)
                 score = (1.0 - frame_u).clamp(min=0.0)
+            if mask is not None:
+                score = score.masked_fill(mask < 0.5, -1e9)
             frame_w = F.softmax(score / tau, dim=1)  # [B, N]
+            if mask is not None:
+                frame_w = frame_w * mask
+                frame_w = frame_w / frame_w.sum(dim=1, keepdim=True).clamp_min(1e-8)
 
         w = frame_w.unsqueeze(-1)  # [B, N, 1]
         alpha = torch.sum(w * alpha_frame, dim=1)  # [B, K]
         feat_patient = torch.sum(w * feat_fused, dim=1)  # [B, 256]
         return alpha, feat_patient, frame_u, frame_w
 
-    def _review_indices(self, frame_u: torch.Tensor) -> torch.Tensor:
-        """每例患者不确定性最高的 top-k 帧下标，形状 [B, top_k]。"""
+    def _review_indices(
+        self, frame_u: torch.Tensor, frame_mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """每例患者不确定性最高的 top-k 帧下标，形状 [B, top_k]（仅有效帧）。"""
+        u = frame_u
+        if frame_mask is not None:
+            u = u.masked_fill(frame_mask < 0.5, -1.0)
         k = min(self.review_top_k, frame_u.shape[1])
-        return torch.topk(frame_u, k=k, dim=1, largest=True).indices
+        return torch.topk(u, k=k, dim=1, largest=True).indices
 
     def forward(
         self,
@@ -178,6 +214,7 @@ class OptiGenesis(nn.Module):
         return_aux=False,
         return_coral_feat=False,
         return_frame_details=False,
+        frame_mask=None,
     ):
         # A. 逐帧视觉特征
         # img: [B, N, C, H, W]
@@ -186,11 +223,18 @@ class OptiGenesis(nn.Module):
         v_feat_flat = self.vision_backbone(img_flat)  # [B*N, Dv]
         v_feat = v_feat_flat.view(b, n_images, -1)  # [B, N, Dv]
 
+        if frame_mask is not None:
+            frame_mask = frame_mask.to(device=img.device, dtype=v_feat.dtype)
+
         frame_details = None
 
         if self.frame_agg_mode == "mean":
             # —— v3 / B1：先等权池化，再患者级 EDL ——
-            v_feat_patient = torch.mean(v_feat, dim=1)
+            if frame_mask is None:
+                v_feat_patient = torch.mean(v_feat, dim=1)
+            else:
+                m = frame_mask.unsqueeze(-1)
+                v_feat_patient = (v_feat * m).sum(dim=1) / m.sum(dim=1).clamp_min(1.0)
             if self.use_clinical:
                 c_feat = self.clinical_mlp(clinical)
                 feat = torch.cat([v_feat_patient, c_feat], dim=1)
@@ -202,31 +246,39 @@ class OptiGenesis(nn.Module):
             if return_frame_details:
                 # mean 模式无真正帧级 α；用「等权、u 占位」方便下游接口统一
                 frame_u = torch.zeros(b, n_images, device=img.device, dtype=alpha.dtype)
-                frame_w = torch.full(
-                    (b, n_images), 1.0 / float(n_images), device=img.device, dtype=alpha.dtype
-                )
+                if frame_mask is None:
+                    frame_w = torch.full(
+                        (b, n_images),
+                        1.0 / float(n_images),
+                        device=img.device,
+                        dtype=alpha.dtype,
+                    )
+                else:
+                    frame_w = frame_mask / frame_mask.sum(dim=1, keepdim=True).clamp_min(1.0)
                 frame_details = {
                     "frame_alpha": None,
                     "frame_uncertainty": frame_u,
                     "frame_weights": frame_w,
-                    "review_frame_indices": self._review_indices(frame_u),
+                    "review_frame_indices": self._review_indices(frame_u, frame_mask),
                     "agg_mode": self.frame_agg_mode,
+                    "frame_mask": frame_mask,
                 }
         else:
             # —— equal / uncertainty_weighted：帧级 EDL 再聚合 ——
             alpha_frame, feat_fused_frames, c_feat, v_feat_patient = self._frame_alphas_and_features(
-                v_feat, clinical
+                v_feat, clinical, frame_mask=frame_mask
             )
             alpha, feat_fused, frame_u, frame_w = self._aggregate_frame_alphas(
-                alpha_frame, feat_fused_frames
+                alpha_frame, feat_fused_frames, frame_mask=frame_mask
             )
             if return_frame_details:
                 frame_details = {
                     "frame_alpha": alpha_frame,
                     "frame_uncertainty": frame_u,
                     "frame_weights": frame_w,
-                    "review_frame_indices": self._review_indices(frame_u),
+                    "review_frame_indices": self._review_indices(frame_u, frame_mask),
                     "agg_mode": self.frame_agg_mode,
+                    "frame_mask": frame_mask,
                 }
 
         # 组装返回值（保持旧调用兼容：默认只返回患者级 alpha）

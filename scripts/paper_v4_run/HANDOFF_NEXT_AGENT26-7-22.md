@@ -209,3 +209,5 @@ ce 判决 JSON：`outputs/paper_v4/baseline/AUTO_PROBE_decision_ce.json`
 ## 一句话现状
 
 FrameAux / 锐化 / 换权重后处理 / **maxprob·negent 重训** 均已探完。**主候选仍是 edl_u+edl@0.3@τ=0.5（外部≈0.577）**；手写换信号重训外部大跌。下一任：征得同意后做 **D（可学习注意力）或 C（改监督）**。
+
+**新增（2026-07-23，老师要求）**：用满 TIFF 时序页。见 `HANDOFF_NEXT_AGENT.md` / `README_EXPAND_TIFF_PAGES.md`。

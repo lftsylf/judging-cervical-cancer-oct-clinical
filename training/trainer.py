@@ -16,6 +16,7 @@ from sklearn.metrics import (
     matthews_corrcoef
 )
 from training.losses import evidence_loss, focal_loss_with_edl, coral_loss, wma_loss
+from data.dataset_lancet import unpack_loader_batch
 import numpy as np
 from collections import defaultdict
 from itertools import cycle
@@ -70,15 +71,25 @@ def _frame_aux_loss(
     wma_temperature=1.0,
     kl_annealing_epochs=10,
     loss_type="edl",
+    frame_mask=None,
 ):
     """
     帧级弱监督：每帧共用患者标签。
     frame_alpha: [B, N, K]
+    frame_mask: 可选 [B, N]，只对有效帧（非 pad）计损失。
     """
     b, n, k = frame_alpha.shape
-    alpha_flat = frame_alpha.reshape(b * n, k)
-    y_flat = y_onehot.unsqueeze(1).expand(-1, n, -1).reshape(b * n, k)
-    labels_flat = labels.unsqueeze(1).expand(-1, n).reshape(b * n)
+    if frame_mask is not None:
+        valid = frame_mask > 0.5  # [B, N]
+        if not bool(valid.any()):
+            return frame_alpha.new_zeros(())
+        alpha_flat = frame_alpha[valid]  # [M, K]
+        y_flat = y_onehot.unsqueeze(1).expand(-1, n, -1)[valid]
+        labels_flat = labels.unsqueeze(1).expand(-1, n)[valid]
+    else:
+        alpha_flat = frame_alpha.reshape(b * n, k)
+        y_flat = y_onehot.unsqueeze(1).expand(-1, n, -1).reshape(b * n, k)
+        labels_flat = labels.unsqueeze(1).expand(-1, n).reshape(b * n)
 
     if str(loss_type).lower() == "ce":
         # p = α / Σα，对 log p 做 CE（弱监督，数值上简单）
@@ -138,8 +149,12 @@ def train_epoch(
     )
     
     pbar = tqdm(loader, desc=f"训练 {epoch+1}/{total_epochs}")
-    for imgs, clinical, labels in pbar:
-        imgs, clinical, labels = imgs.to(device), clinical.to(device), labels.to(device)
+    for batch in pbar:
+        imgs, clinical, labels, frame_mask = unpack_loader_batch(batch)
+        imgs = imgs.to(device)
+        clinical = clinical.to(device)
+        labels = labels.to(device)
+        frame_mask = frame_mask.to(device)
         
         # One-hot 标签 (EDL Loss 需要)
         y_onehot = F.one_hot(labels, num_classes=2).float()
@@ -147,45 +162,48 @@ def train_epoch(
         optimizer.zero_grad()
         
         if use_coral:
-            imgs_t, clin_t, _ = next(target_iter)
+            t_batch = next(target_iter)
+            imgs_t, clin_t, _, mask_t = unpack_loader_batch(t_batch)
             imgs_t, clin_t = imgs_t.to(device), clin_t.to(device)
+            mask_t = mask_t.to(device)
 
         # 前向：得到 alpha，以及可选的 aux / 帧明细 / CORAL 用特征
         frame_details = None
+        fw = dict(frame_mask=frame_mask)
         if enable_multimodal_aux and use_coral and need_frame:
             alpha, aux_logits_v, aux_logits_c, feat_s, frame_details = model(
-                imgs, clinical, return_aux=True, return_coral_feat=True, return_frame_details=True
+                imgs, clinical, return_aux=True, return_coral_feat=True, return_frame_details=True, **fw
             )
-            _, feat_t = model(imgs_t, clin_t, return_coral_feat=True)
+            _, feat_t = model(imgs_t, clin_t, return_coral_feat=True, frame_mask=mask_t)
         elif enable_multimodal_aux and need_frame:
             alpha, aux_logits_v, aux_logits_c, frame_details = model(
-                imgs, clinical, return_aux=True, return_frame_details=True
+                imgs, clinical, return_aux=True, return_frame_details=True, **fw
             )
             feat_s, feat_t = None, None
         elif enable_multimodal_aux and use_coral:
             alpha, aux_logits_v, aux_logits_c, feat_s = model(
-                imgs, clinical, return_aux=True, return_coral_feat=True
+                imgs, clinical, return_aux=True, return_coral_feat=True, **fw
             )
-            _, feat_t = model(imgs_t, clin_t, return_coral_feat=True)
+            _, feat_t = model(imgs_t, clin_t, return_coral_feat=True, frame_mask=mask_t)
         elif enable_multimodal_aux:
-            alpha, aux_logits_v, aux_logits_c = model(imgs, clinical, return_aux=True)
+            alpha, aux_logits_v, aux_logits_c = model(imgs, clinical, return_aux=True, **fw)
             feat_s, feat_t = None, None
         elif use_coral and need_frame:
             alpha, feat_s, frame_details = model(
-                imgs, clinical, return_coral_feat=True, return_frame_details=True
+                imgs, clinical, return_coral_feat=True, return_frame_details=True, **fw
             )
-            _, feat_t = model(imgs_t, clin_t, return_coral_feat=True)
+            _, feat_t = model(imgs_t, clin_t, return_coral_feat=True, frame_mask=mask_t)
             aux_logits_v, aux_logits_c = None, None
         elif use_coral:
-            alpha, feat_s = model(imgs, clinical, return_coral_feat=True)
-            _, feat_t = model(imgs_t, clin_t, return_coral_feat=True)
+            alpha, feat_s = model(imgs, clinical, return_coral_feat=True, **fw)
+            _, feat_t = model(imgs_t, clin_t, return_coral_feat=True, frame_mask=mask_t)
             aux_logits_v, aux_logits_c = None, None
         elif need_frame:
-            alpha, frame_details = model(imgs, clinical, return_frame_details=True)
+            alpha, frame_details = model(imgs, clinical, return_frame_details=True, **fw)
             aux_logits_v, aux_logits_c = None, None
             feat_s, feat_t = None, None
         else:
-            alpha = model(imgs, clinical)
+            alpha = model(imgs, clinical, **fw)
             aux_logits_v, aux_logits_c = None, None
             feat_s, feat_t = None, None
         
@@ -234,9 +252,9 @@ def train_epoch(
                     wma_temperature=wma_temperature,
                     kl_annealing_epochs=kl_annealing_epochs,
                     loss_type=frame_aux_type,
+                    frame_mask=frame_mask,
                 )
                 loss = loss + float(frame_aux_weight) * floss
-
         # 可选：CORAL（无标签目标域 = 外部折，仅用特征统计对齐）
         if use_coral and feat_s is not None and feat_t is not None:
             m = min(feat_s.size(0), feat_t.size(0))
@@ -287,12 +305,17 @@ def validate(
     
     # 收集所有batch的预测结果和损失
     with torch.no_grad():
-        for imgs, clinical, labels in loader:
-            imgs, clinical, labels = imgs.to(device), clinical.to(device), labels.to(device)
+        for batch in loader:
+            imgs, clinical, labels, frame_mask = unpack_loader_batch(batch)
+            imgs = imgs.to(device)
+            clinical = clinical.to(device)
+            labels = labels.to(device)
+            frame_mask = frame_mask.to(device)
             
             # 需要帧级复核信息时打开 return_frame_details；训练损失仍只用患者级 alpha
-            alpha, frame_details = model(imgs, clinical, return_frame_details=True)
-            
+            alpha, frame_details = model(
+                imgs, clinical, return_frame_details=True, frame_mask=frame_mask
+            )            
             # 计算损失（用于验证集的平均损失）
             y_onehot = F.one_hot(labels, num_classes=2).float()
             if use_wma:

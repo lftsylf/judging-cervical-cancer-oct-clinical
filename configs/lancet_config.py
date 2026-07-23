@@ -50,8 +50,15 @@ class Config:
 
     # --- 3. 数据超参 ---
     IMG_SIZE = 224
-    NUM_SLICES = 12 # 新增，固定每个病例的切片数量
-    # 默认 4；ViT-Base 多帧输入若 OOM，可 export OPTIGENESIS_BATCH_SIZE=2
+    # 历史字段：每病例约 12 个点位 TIFF；展开多页后 N≈60（辽宁）或 120（华西/湘雅）
+    NUM_SLICES = 12
+    # 是否把每个 TIFF 的全部时序页展开为独立帧（病灶常只在少数页可见）
+    # 关闭（默认）：与历史实验一致，PIL 只读第一页 → 每患者 N≈12
+    # 开启：export OPTIGENESIS_EXPAND_TIFF_PAGES=1 → N≈60/120；建议同时 OPTIGENESIS_BATCH_SIZE=1 或 2
+    EXPAND_TIFF_PAGES = _env_bool("OPTIGENESIS_EXPAND_TIFF_PAGES", False)
+    # 每个 TIFF 最多取前多少页；0=不截断（辽宁常见 5，华西/湘雅常见 10）
+    MAX_PAGES_PER_TIFF = _env_int("OPTIGENESIS_MAX_PAGES_PER_TIFF", 0)
+    # 默认 4；展开多页后极易 OOM，可 export OPTIGENESIS_BATCH_SIZE=1
     try:
         BATCH_SIZE = int(os.getenv("OPTIGENESIS_BATCH_SIZE", "4"))
     except ValueError:

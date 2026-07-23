@@ -277,6 +277,11 @@ def main():
         f"帧聚合: {frame_agg_mode} (signal={frame_weight_signal}, τ={frame_agg_temp}, "
         f"review_top_k={frame_review_k})"
     )
+    print(
+        f" TIFF 时序: EXPAND_TIFF_PAGES={bool(getattr(Config, 'EXPAND_TIFF_PAGES', False))} "
+        f"| MAX_PAGES_PER_TIFF={getattr(Config, 'MAX_PAGES_PER_TIFF', 0)} "
+        f"| BATCH_SIZE={Config.BATCH_SIZE}"
+    )
     model = OptiGenesis(
         model_name=Config.BACKBONE,
         use_clinical=Config.USE_CLINICAL,

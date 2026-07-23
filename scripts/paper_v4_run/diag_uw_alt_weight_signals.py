@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from configs.lancet_config import Config  # noqa: E402
-from data.dataset_lancet import get_dataloader  # noqa: E402
+from data.dataset_lancet import get_dataloader, unpack_loader_batch  # noqa: E402
 from models.optigenesis_model import OptiGenesis  # noqa: E402
 
 
@@ -149,12 +149,16 @@ def collect(model, loader, device):
     model.eval()
     alphas, feats, ys = [], [], []
     with torch.no_grad():
-        for imgs, clinical, labels in loader:
+        for batch in loader:
+            imgs, clinical, labels, frame_mask = unpack_loader_batch(batch)
             imgs = imgs.to(device)
             clinical = clinical.to(device)
+            frame_mask = frame_mask.to(device)
             b, n_images, c, h, w = imgs.shape
             v_feat = model.vision_backbone(imgs.view(b * n_images, c, h, w)).view(b, n_images, -1)
-            alpha_frame, feat_fused, _, _ = model._frame_alphas_and_features(v_feat, clinical)
+            alpha_frame, feat_fused, _, _ = model._frame_alphas_and_features(
+                v_feat, clinical, frame_mask=frame_mask
+            )
             alphas.append(alpha_frame.cpu())
             feats.append(feat_fused.cpu())
             ys.append(labels.numpy())

@@ -209,3 +209,9 @@ ce 判决 JSON：`outputs/paper_v4/baseline/AUTO_PROBE_decision_ce.json`
 ## 一句话现状
 
 FrameAux / 锐化 / 换权重后处理 / **maxprob·negent 重训** 均已探完。**主候选仍是 edl_u+edl@0.3@τ=0.5（外部≈0.577）**；手写换信号重训外部大跌。下一任：征得同意后做 **D（可学习注意力）或 C（改监督）**。
+
+**新增（2026-07-23，老师要求）**：用满 TIFF 时序页。
+- `OPTIGENESIS_EXPAND_TIFF_PAGES=1` → 每 TIFF 读全部页（辽宁≈5→N≈60；华西/湘雅≈10→N≈120）
+- batch pad + `frame_mask`；**默认关闭**以免破坏旧实验对比
+- 说明：`README_EXPAND_TIFF_PAGES.md`；脚本：`run_expand_tiff_pages_t2_oct_only.sh`
+- 可与 D/C 并行：先开全时序重训 edl@0.3，看稀疏病灶页是否改善
