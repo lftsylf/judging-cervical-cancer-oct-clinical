@@ -272,11 +272,18 @@ def main():
     frame_agg_temp = float(getattr(Config, "FRAME_AGG_TEMPERATURE", 0.5))
     frame_review_k = int(getattr(Config, "FRAME_REVIEW_TOP_K", 3))
     frame_weight_signal = getattr(Config, "FRAME_WEIGHT_SIGNAL", "edl_u")
+    u_score_base = float(getattr(Config, "FRAME_U_SCORE_BASE", 0.5))
+    u_score_scale = float(getattr(Config, "FRAME_U_SCORE_SCALE", 10.0))
     print(
         f"【构建模型】骨干网络: {Config.BACKBONE}  |  临床特征融合: {Config.USE_CLINICAL}  |  "
         f"帧聚合: {frame_agg_mode} (signal={frame_weight_signal}, τ={frame_agg_temp}, "
         f"review_top_k={frame_review_k})"
     )
+    if str(frame_weight_signal).lower() == "edl_u_amp":
+        print(
+            f"  edl_u_amp: score=(u_base−u)·scale | "
+            f"u_base={u_score_base} scale={u_score_scale}"
+        )
     print(
         f" TIFF 时序: EXPAND_TIFF_PAGES={bool(getattr(Config, 'EXPAND_TIFF_PAGES', False))} "
         f"| MAX_PAGES_PER_TIFF={getattr(Config, 'MAX_PAGES_PER_TIFF', 0)} "
@@ -290,6 +297,8 @@ def main():
         agg_temperature=frame_agg_temp,
         review_top_k=frame_review_k,
         weight_signal=frame_weight_signal,
+        u_score_base=u_score_base,
+        u_score_scale=u_score_scale,
     ).to(device)
     
     freeze_backbone_epochs = int(getattr(Config, "FREEZE_BACKBONE_EPOCHS", 0) or 0)

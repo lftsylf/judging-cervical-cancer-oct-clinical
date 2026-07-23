@@ -19,7 +19,7 @@ class OptiGenesis(nn.Module):
     """
 
     AGG_MODES = ("mean", "equal", "uncertainty_weighted")
-    WEIGHT_SIGNALS = ("edl_u", "maxprob", "negent")
+    WEIGHT_SIGNALS = ("edl_u", "edl_u_amp", "maxprob", "negent")
 
     def __init__(
         self,
@@ -30,6 +30,8 @@ class OptiGenesis(nn.Module):
         agg_temperature=0.5,
         review_top_k=3,
         weight_signal="edl_u",
+        u_score_base=0.5,
+        u_score_scale=10.0,
     ):
         super().__init__()
         self.use_clinical = use_clinical
@@ -47,12 +49,19 @@ class OptiGenesis(nn.Module):
             raise ValueError(
                 f"weight_signal 必须是 {self.WEIGHT_SIGNALS} 之一，收到: {weight_signal}"
             )
+        self.u_score_base = float(u_score_base)
+        self.u_score_scale = float(u_score_scale)
 
         # 1. 视觉基座（timm；num_classes=0 去掉分类头，前向得到全局池化后的特征向量）
         print(f"🔍 正在加载视觉 backbone: {model_name}")
         print(
             f"   帧聚合模式 frame_agg_mode={self.frame_agg_mode} | "
             f"weight_signal={self.weight_signal} | τ={self.agg_temperature}"
+            + (
+                f" | u_base={self.u_score_base} scale={self.u_score_scale}"
+                if self.weight_signal == "edl_u_amp"
+                else ""
+            )
         )
         self.vision_backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
         self.vision_dim = self.vision_backbone.num_features
@@ -182,6 +191,9 @@ class OptiGenesis(nn.Module):
                     msum = mask.sum(dim=1, keepdim=True).clamp_min(1.0)
                     mean = (score * mask).sum(dim=1, keepdim=True) / msum
                     score = score - mean
+            elif self.weight_signal == "edl_u_amp":
+                # score = (u_base − u) · scale：把挤在窄区间的 u 差放大后再 /τ
+                score = (float(self.u_score_base) - frame_u) * float(self.u_score_scale)
             else:
                 # edl_u（默认）：置信度 (1−u)
                 score = (1.0 - frame_u).clamp(min=0.0)

@@ -24,15 +24,39 @@ export OPTIGENESIS_MAX_PAGES_PER_TIFF=0
 
 同一 LOHO 折的 train 常混有辽宁与华西/湘雅 → batch 内 N 不同，loader 会 **pad + `frame_mask`**，聚合/帧辅损只计有效帧。
 
+### 页数不同会不会「弄坏」训练？
+
+**不会因为 pad 泄漏或污染。** padding 全黑帧被 `frame_mask=0` 屏蔽，不进 softmax 聚合、不进帧辅损。
+
+**会有的真实差异（不是 bug）**：辽宁有效帧≈60、华西/湘雅≈120。等权时更长序列更易稀释稀疏病灶；UW / `edl_u_amp` 的目标正是按 u 聚焦少数帧，减轻「帧数多=稀释重」。跨中心页数不同是采集协议差异，应用 mask 后算法上公平（每人都在自己的有效帧上归一化权重）。
+
 ## 启动探路
+
+仅展开页（旧 edl_u）：
 
 ```bash
 ./run_experiment.sh --detach ./tsy_loho \
   ./scripts/paper_v4_run/run_expand_tiff_pages_t2_oct_only.sh
 ```
 
-默认对齐 edl@0.3 帧辅损设定，输出目录：
-`outputs/paper_v4/baseline/ours_uw_frameaux_t2_edl_w0.3_expand_pages/`
+**展开页 + edl@0.3 + 放大 u 差（推荐本次）**：
+
+```bash
+./run_experiment.sh --detach ./tsy_loho \
+  ./scripts/paper_v4_run/run_expand_pages_edl03_uamp_t2_oct_only.sh
+```
+
+输出：`outputs/paper_v4/baseline/ours_uw_frameaux_t2_edl_w0.3_expand_uamp10/`
+
+### 倍率选 10 的原因（`edl_u_amp`）
+
+\(\mathrm{score}=(u_{\mathrm{base}}-u)\cdot\mathrm{scale}\)，再 `softmax(score/τ)`，τ=0.5。
+
+- 观测 \(u\) 多在 **0.20–0.33**；旧式 `(1−u)/τ` 下 Δu=0.05 → Δlogit≈0.1 → 近等权。
+- **u_base=0.5**：相对该区间上沿，`(0.5−u)` 多为正；0.4 对 u≈0.33 过狠。
+- **scale=10**：Δu=0.05 → Δscore=0.5 → `/0.5` → Δlogit≈**1**，权重比约 \(e\approx2.7\)，能拉开；scale 20–40 更接近硬选 top 帧。
+
+环境变量：`OPTIGENESIS_FRAME_U_SCORE_BASE`、`OPTIGENESIS_FRAME_U_SCORE_SCALE`。
 
 ## 仍保持的协议
 
