@@ -10,10 +10,15 @@
 #   ./run_experiment.sh --detach ./tsy_loho \
 #     ./scripts/paper_v4_run/run_expand_pages_edl03_uamp_t2_oct_only.sh
 #
+# 看日志（两处，内容同步）:
+#   tail -f logs/detached_latest.log
+#   tail -f outputs/.../huaxi/seed_42/logs/train_console.log
+#
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export PATH="/home/amax/anaconda3/bin:${PATH:-}"
+PYTHON="${PYTHON:-python}"
 
 export OPTIGENESIS_EXPAND_TIFF_PAGES=1
 export OPTIGENESIS_BATCH_SIZE="${OPTIGENESIS_BATCH_SIZE:-1}"
@@ -37,6 +42,8 @@ export OPTIGENESIS_ENABLE_AUX=0
 export OPTIGENESIS_USE_CLINICAL=0
 
 OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-outputs/paper_v4/baseline/ours_uw_frameaux_t2_edl_w0.3_expand_uamp10}"
+# 避免脚本里已带 hospital 路径时再被 main 拼一层 hospital
+unset OPTIGENESIS_OUTPUT_DIR 2>/dev/null || true
 mkdir -p "$OUT_ROOT"
 
 SEEDS=(42)
@@ -53,10 +60,18 @@ for h in "${HOSPITALS[@]}"; do
   for s in "${SEEDS[@]}"; do
     export HOSPITAL_NAME="$h"
     export OPTIGENESIS_SEED="$s"
-    export OPTIGENESIS_OUTPUT_DIR="$OUT_ROOT/$h/seed_$s"
-    mkdir -p "$OPTIGENESIS_OUTPUT_DIR"
+    # 与其它 T2 脚本一致：OUTPUT_DIR=.../hospital ，RUN_NAME=seed_XX
+    # → 最终目录 .../hospital/seed_XX/{checkpoints,logs}/ ，不会多嵌一层 hospital
+    export OPTIGENESIS_OUTPUT_DIR="${OUT_ROOT}/$h"
+    export OPTIGENESIS_OUTPUT_RUN_NAME="seed_${s}"
+
+    LOG_DIR="${OPTIGENESIS_OUTPUT_DIR}/${OPTIGENESIS_OUTPUT_RUN_NAME}/logs"
+    mkdir -p "$LOG_DIR"
+    RUN_LOG="${LOG_DIR}/train_console.log"
+
     echo ">>> $h seed=$s"
-    python main.py
+    echo "    console log → $RUN_LOG"
+    "$PYTHON" main.py 2>&1 | tee "$RUN_LOG"
   done
 done
 
