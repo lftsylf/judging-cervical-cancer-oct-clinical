@@ -299,6 +299,7 @@ def main():
         weight_signal=frame_weight_signal,
         u_score_base=u_score_base,
         u_score_scale=u_score_scale,
+        frame_encode_chunk=int(getattr(Config, "FRAME_ENCODE_CHUNK", 16) or 0),
     ).to(device)
     
     freeze_backbone_epochs = int(getattr(Config, "FREEZE_BACKBONE_EPOCHS", 0) or 0)

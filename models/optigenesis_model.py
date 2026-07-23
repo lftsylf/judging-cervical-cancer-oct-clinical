@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 import timm
 from .uncertainty import UncertaintyHead
 
@@ -32,6 +33,7 @@ class OptiGenesis(nn.Module):
         weight_signal="edl_u",
         u_score_base=0.5,
         u_score_scale=10.0,
+        frame_encode_chunk=16,
     ):
         super().__init__()
         self.use_clinical = use_clinical
@@ -51,6 +53,7 @@ class OptiGenesis(nn.Module):
             )
         self.u_score_base = float(u_score_base)
         self.u_score_scale = float(u_score_scale)
+        self.frame_encode_chunk = int(frame_encode_chunk or 0)
 
         # 1. 视觉基座（timm；num_classes=0 去掉分类头，前向得到全局池化后的特征向量）
         print(f"🔍 正在加载视觉 backbone: {model_name}")
@@ -219,6 +222,29 @@ class OptiGenesis(nn.Module):
         k = min(self.review_top_k, frame_u.shape[1])
         return torch.topk(u, k=k, dim=1, largest=True).indices
 
+    def _encode_vision_frames(self, img: torch.Tensor) -> torch.Tensor:
+        """
+        img: [B, N, C, H, W] → v_feat [B, N, Dv]
+        N 很大（全时序 60/120）时按 chunk 前向；训练期用 checkpoint 降低显存。
+        """
+        b, n_images, c, h, w = img.shape
+        chunk = int(self.frame_encode_chunk or 0)
+        if chunk <= 0 or n_images <= chunk:
+            flat = img.view(b * n_images, c, h, w)
+            return self.vision_backbone(flat).view(b, n_images, -1)
+
+        feats = []
+        for start in range(0, n_images, chunk):
+            end = min(start + chunk, n_images)
+            flat = img[:, start:end].reshape(-1, c, h, w)
+            if self.training:
+                # checkpoint：反传时重算该块，避免同时保留全部帧的中间激活
+                out = checkpoint(self.vision_backbone, flat, use_reentrant=False)
+            else:
+                out = self.vision_backbone(flat)
+            feats.append(out.view(b, end - start, -1))
+        return torch.cat(feats, dim=1)
+
     def forward(
         self,
         img,
@@ -230,10 +256,8 @@ class OptiGenesis(nn.Module):
     ):
         # A. 逐帧视觉特征
         # img: [B, N, C, H, W]
-        b, n_images, c, h, w = img.shape
-        img_flat = img.view(b * n_images, c, h, w)
-        v_feat_flat = self.vision_backbone(img_flat)  # [B*N, Dv]
-        v_feat = v_feat_flat.view(b, n_images, -1)  # [B, N, Dv]
+        v_feat = self._encode_vision_frames(img)  # [B, N, Dv]
+        b, n_images, _ = v_feat.shape
 
         if frame_mask is not None:
             frame_mask = frame_mask.to(device=img.device, dtype=v_feat.dtype)

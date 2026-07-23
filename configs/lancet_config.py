@@ -58,6 +58,8 @@ class Config:
     EXPAND_TIFF_PAGES = _env_bool("OPTIGENESIS_EXPAND_TIFF_PAGES", False)
     # 每个 TIFF 最多取前多少页；0=不截断（辽宁常见 5，华西/湘雅常见 10）
     MAX_PAGES_PER_TIFF = _env_int("OPTIGENESIS_MAX_PAGES_PER_TIFF", 0)
+    # 骨干按帧分块前向（+checkpoint），展开 N=120 时防 OOM；0=不分块
+    FRAME_ENCODE_CHUNK = _env_int("OPTIGENESIS_FRAME_ENCODE_CHUNK", 16)
     # 默认 4；展开多页后极易 OOM，可 export OPTIGENESIS_BATCH_SIZE=1
     try:
         BATCH_SIZE = int(os.getenv("OPTIGENESIS_BATCH_SIZE", "4"))
