@@ -134,9 +134,9 @@ ce 判决 JSON：`outputs/paper_v4/baseline/AUTO_PROBE_decision_ce.json`
 
 ## 你接手后的第一步（按顺序）
 
-1. **FrameAux 网格 / 锐化 τ / 换权重后处理（B）均已完成** → 见下方诊断节与两份 `DIAG_*.md`。
-2. **AUC 主候选仍是 edl@0.3 @ τ=0.5**（外部 ≈0.577）；勿改尖 τ；勿把只在 external 涨、val 掉的后处理当主方法。
-3. **下一优先：D 或 C 并重训**（可学习注意力 / 改帧监督）。大改前征得用户同意。
+1. **权重信号重训（maxprob/negent ×4）已完成且失败** → `RESULTS_weight_signal_retrain_2026-07-23.md`。
+2. **主候选仍是 edl_u + FrameAux edl@0.3 + τ=0.5**（外部 ≈0.577）；勿再扫权重公式/τ。
+3. **下一优先：D（可学习帧注意力）或 C（改监督）并重训**。大改前征得用户同意。
 4. 中文简表 + 结论；commit 用中文 message。
 
 ---
@@ -166,21 +166,22 @@ ce 判决 JSON：`outputs/paper_v4/baseline/AUTO_PROBE_decision_ce.json`
 **A. 温度 / 锐化 — 已做完，否定**
 - 勿再扫 τ；勿改默认推理温度为更尖值。
 
-**B. 换权重定义后处理 — 已做完，弱阳性但不可靠**
-- 报告：`DIAG_uw_alt_weight_signals_edl03.md`；脚本：`diag_uw_alt_weight_signals.py`
-- 对齐 CSV 全过；外部最高 negent/topk3-maxprob ≈0.593（+0.016），但 **val −0.005~−0.016**
-- 勿把「只涨 external」的后处理写进论文主方法
+**B. 换权重定义 — 后处理 + 重训均已完成，否定**
+- 后处理报告：`DIAG_uw_alt_weight_signals_edl03.md`（外部虚高、伤 val）
+- **重训**（FrameAux edl@0.3）：maxprob τ∈{0.5,0.1}、negent τ∈{0.1,0.01}  
+  → val 全 ≤ 对照；**外部均值 0.49–0.51（对照 0.577，Δ≈−0.07~−0.09）**；湘雅塌缩；\(n_{\mathrm{eff}}\) 仍≈11–12  
+  → 见 `RESULTS_weight_signal_retrain_2026-07-23.md`
 
 **C. 改监督（下一优先之一）**
 - 患者标签广播鼓励帧同质化；可试多样性正则 / 部分帧 aux 等，需重训。
 
-**D. 可学习帧注意力（下一优先之一）**
-- 与 EDL-\(u\) 解耦；用 val 选模、external 终评。比后处理更可能让加权真正学到东西。
+**D. 可学习帧注意力（下一优先之一，更推荐）**
+- 与 EDL-\(u\)/maxprob/negent 手写公式解耦；用 val 选模、external 终评。
 
 **明确不要再做的：**
-- 盲扫 FrameAux weight / 推理 τ / 再堆后处理权重公式指望救 UW
+- 盲扫 FrameAux weight / 推理 τ / maxprob·negent 等手写权重公式
 - WMA/EMA/多模态 Aux 当主修复
-- 仅凭 external 涨分选定后处理模式（违反诚实协议）
+- 仅凭后处理 external 涨分定主方法
 
 ---
 
@@ -199,6 +200,7 @@ ce 判决 JSON：`outputs/paper_v4/baseline/AUTO_PROBE_decision_ce.json`
 - `scripts/paper_v4_run/RESULTS_T2_frameaux_2026-07-22.md`
 - `scripts/paper_v4_run/DIAG_uw_inference_sharpen_edl03.md`
 - `scripts/paper_v4_run/DIAG_uw_alt_weight_signals_edl03.md`
+- `scripts/paper_v4_run/RESULTS_weight_signal_retrain_2026-07-23.md`
 - `GIT_MANAGEMENT_GUIDE.md`
 - v3 冻结只读：`outputs/第三版/`、`data/snapshots/paper_v3_tsy_loho/`；tag `paper-v3-muse-full`
 
@@ -206,4 +208,4 @@ ce 判决 JSON：`outputs/paper_v4/baseline/AUTO_PROBE_decision_ce.json`
 
 ## 一句话现状
 
-诚实协议已通；FrameAux / 锐化 τ / **换权重后处理（B）** 均已探完。AUC 主候选仍是 **edl@0.3 @ τ=0.5（≈0.577）**；后处理外部可虚高到 ~0.59 但 **伤 val**。下一任：征得同意后 **重训 D（可学习注意力）或 C（改监督）**。
+FrameAux / 锐化 / 换权重后处理 / **maxprob·negent 重训** 均已探完。**主候选仍是 edl_u+edl@0.3@τ=0.5（外部≈0.577）**；手写换信号重训外部大跌。下一任：征得同意后做 **D（可学习注意力）或 C（改监督）**。
