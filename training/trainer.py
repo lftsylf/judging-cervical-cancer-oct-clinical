@@ -21,6 +21,30 @@ import numpy as np
 from collections import defaultdict
 from itertools import cycle
 
+
+def _pad_stack_2d(arrays, pad_value=0.0):
+    """将若干 [B_i, N_i]（或 [N_i]）数组 pad 到相同 N 后沿 axis=0 拼接。"""
+    if not arrays:
+        return np.zeros((0, 0), dtype=np.float32)
+    normed = []
+    for a in arrays:
+        a = np.asarray(a)
+        if a.ndim == 1:
+            a = a[None, :]
+        normed.append(a)
+    max_n = max(int(a.shape[1]) for a in normed)
+    out = []
+    for a in normed:
+        if a.shape[1] < max_n:
+            pad = np.full(
+                (a.shape[0], max_n - a.shape[1]),
+                pad_value,
+                dtype=a.dtype,
+            )
+            a = np.concatenate([a, pad], axis=1)
+        out.append(a)
+    return np.concatenate(out, axis=0)
+
 def _patient_edl_loss(
     alpha,
     y_onehot,
@@ -360,9 +384,10 @@ def validate(
     targets = np.array(targets)
     uncertainties = np.array(uncertainties)
     if frame_uncertainties_all:
-        frame_uncertainties_arr = np.concatenate(frame_uncertainties_all, axis=0)
-        frame_weights_arr = np.concatenate(frame_weights_all, axis=0)
-        review_indices_arr = np.concatenate(review_indices_all, axis=0)
+        # 全时序展开后辽宁 N≈60、华西/湘雅 N≈120；batch_size=1 时各 batch 的 N 不同
+        frame_uncertainties_arr = _pad_stack_2d(frame_uncertainties_all, pad_value=0.0)
+        frame_weights_arr = _pad_stack_2d(frame_weights_all, pad_value=0.0)
+        review_indices_arr = _pad_stack_2d(review_indices_all, pad_value=-1)
     else:
         frame_uncertainties_arr = np.zeros((0, 0), dtype=np.float32)
         frame_weights_arr = np.zeros((0, 0), dtype=np.float32)
