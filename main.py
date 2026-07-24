@@ -284,6 +284,10 @@ def main():
             f"  edl_u_amp: score=(u_base−u)·scale | "
             f"u_base={u_score_base} scale={u_score_scale}"
         )
+    if str(frame_weight_signal).lower() == "topk_p":
+        print(f"  topk_p: 按阳性 p 取 top-{getattr(Config, 'FRAME_TOPK_K', 5)} 帧等权")
+    if str(frame_weight_signal).lower() == "max_p_pool":
+        print("  max_p_pool: 只聚合阳性 p 最大的 1 帧（训练版 max_p）")
     print(
         f" TIFF 时序: EXPAND_TIFF_PAGES={bool(getattr(Config, 'EXPAND_TIFF_PAGES', False))} "
         f"| MAX_PAGES_PER_TIFF={getattr(Config, 'MAX_PAGES_PER_TIFF', 0)} "
@@ -300,6 +304,7 @@ def main():
         u_score_base=u_score_base,
         u_score_scale=u_score_scale,
         frame_encode_chunk=int(getattr(Config, "FRAME_ENCODE_CHUNK", 16) or 0),
+        frame_topk_k=int(getattr(Config, "FRAME_TOPK_K", 5)),
     ).to(device)
     
     freeze_backbone_epochs = int(getattr(Config, "FREEZE_BACKBONE_EPOCHS", 0) or 0)

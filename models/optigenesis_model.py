@@ -20,7 +20,7 @@ class OptiGenesis(nn.Module):
     """
 
     AGG_MODES = ("mean", "equal", "uncertainty_weighted")
-    WEIGHT_SIGNALS = ("edl_u", "edl_u_amp", "maxprob", "negent")
+    WEIGHT_SIGNALS = ("edl_u", "edl_u_amp", "maxprob", "negent", "topk_p", "max_p_pool")
 
     def __init__(
         self,
@@ -34,6 +34,7 @@ class OptiGenesis(nn.Module):
         u_score_base=0.5,
         u_score_scale=10.0,
         frame_encode_chunk=16,
+        frame_topk_k=5,
     ):
         super().__init__()
         self.use_clinical = use_clinical
@@ -54,6 +55,7 @@ class OptiGenesis(nn.Module):
         self.u_score_base = float(u_score_base)
         self.u_score_scale = float(u_score_scale)
         self.frame_encode_chunk = int(frame_encode_chunk or 0)
+        self.frame_topk_k = max(1, int(frame_topk_k))
 
         # 1. 视觉基座（timm；num_classes=0 去掉分类头，前向得到全局池化后的特征向量）
         print(f"🔍 正在加载视觉 backbone: {model_name}")
@@ -65,6 +67,7 @@ class OptiGenesis(nn.Module):
                 if self.weight_signal == "edl_u_amp"
                 else ""
             )
+            + (f" | topk_k={self.frame_topk_k}" if self.weight_signal == "topk_p" else "")
         )
         self.vision_backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
         self.vision_dim = self.vision_backbone.num_features
@@ -176,6 +179,24 @@ class OptiGenesis(nn.Module):
                 )
             else:
                 frame_w = mask / mask.sum(dim=1, keepdim=True).clamp_min(1.0)
+        elif self.weight_signal in ("topk_p", "max_p_pool"):
+            # 按帧阳性概率硬选 top-k / 最大帧，等权（训练期梯度只流经选中帧）
+            s = torch.sum(alpha_frame, dim=-1, keepdim=True).clamp_min(1e-8)
+            p_pos = (alpha_frame / s)[..., 1]  # [B, N]
+            if mask is not None:
+                p_pos = p_pos.masked_fill(mask < 0.5, -1e9)
+            if self.weight_signal == "max_p_pool":
+                k = 1
+            else:
+                k = int(min(self.frame_topk_k, n))
+            idx = torch.topk(p_pos, k=k, dim=1, largest=True).indices  # [B, k]
+            frame_w = torch.zeros(b, n, device=alpha_frame.device, dtype=alpha_frame.dtype)
+            # 每行等权 1/k_i（k 固定；若有效帧 <k，topk 仍返回 k 个但含 -1e9 帧——用 mask 再清）
+            ones = torch.full((b, k), 1.0 / float(k), device=alpha_frame.device, dtype=alpha_frame.dtype)
+            frame_w.scatter_(1, idx, ones)
+            if mask is not None:
+                frame_w = frame_w * mask
+                frame_w = frame_w / frame_w.sum(dim=1, keepdim=True).clamp_min(1e-8)
         else:
             # uncertainty_weighted：按 weight_signal 打分再 softmax(/τ)
             if self.weight_signal == "maxprob":
