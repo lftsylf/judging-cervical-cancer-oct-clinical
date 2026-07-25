@@ -3,7 +3,9 @@
 > 用户可把下文整段粘贴给新对话。上一轮完整对话：  
 > `agent-transcripts/273d4c39-3d47-49e7-b97d-6317037ec8cb`  
 > 仓库内本文件：`scripts/paper_v4_run/HANDOFF_NEXT_AGENT.md`  
-> 带日期副本：`scripts/paper_v4_run/HANDOFF_NEXT_AGENT26-7-22.md`（内容同步）
+> 带日期副本：`scripts/paper_v4_run/HANDOFF_NEXT_AGENT26-7-22.md`（内容同步）  
+> **2026-07-24 增量（pages≤5 + edl_u_amp）**：`HANDOFF_NEXT_AGENT_2026-07-24_pages5_uamp.md`  
+> **2026-07-25 最新（四卡对照完成、等裴老师回复）**：`scripts/paper_v4_run/HANDOFF_NEXT_AGENT_2026-07-25.md` ← **新对话优先读这个**
 
 ---
 
