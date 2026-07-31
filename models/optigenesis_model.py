@@ -15,12 +15,14 @@ class OptiGenesis(nn.Module):
     - ``mean``：等权均值池化特征 → 患者级 EDL（v3 / B1 对照）
     - ``equal``：帧级 EDL → 等权平均 α（消融：有帧不确定、无加权）
     - ``uncertainty_weighted``：帧级 EDL → 按 (1−u) 软加权聚合 α（v4 主方法）
+    - ``attention``：帧级 EDL → 可学习注意力加权聚合 α（u 仅导出/复核，不参与加权）
 
-    帧不确定度（EDL）：u = K / S，S = Σα；置信度 (1−u) 越大，聚合权重越高。
+    帧不确定度（EDL）：u = K / S，S = Σα；UW 模式下置信度 (1−u) 越大，聚合权重越高。
     """
 
-    AGG_MODES = ("mean", "equal", "uncertainty_weighted")
+    AGG_MODES = ("mean", "equal", "uncertainty_weighted", "attention")
     WEIGHT_SIGNALS = ("edl_u", "edl_u_amp", "maxprob", "negent", "topk_p", "max_p_pool")
+    ATTN_QUERY_MODES = ("mean", "evidence")
 
     def __init__(
         self,
@@ -35,6 +37,7 @@ class OptiGenesis(nn.Module):
         u_score_scale=10.0,
         frame_encode_chunk=16,
         frame_topk_k=5,
+        attn_query_mode="mean",
     ):
         super().__init__()
         self.use_clinical = use_clinical
@@ -48,9 +51,14 @@ class OptiGenesis(nn.Module):
         self.agg_temperature = float(agg_temperature)
         self.review_top_k = int(review_top_k)
         self.weight_signal = str(weight_signal).strip().lower()
-        if self.weight_signal not in self.WEIGHT_SIGNALS:
+        if self.frame_agg_mode == "uncertainty_weighted" and self.weight_signal not in self.WEIGHT_SIGNALS:
             raise ValueError(
                 f"weight_signal 必须是 {self.WEIGHT_SIGNALS} 之一，收到: {weight_signal}"
+            )
+        self.attn_query_mode = str(attn_query_mode).strip().lower()
+        if self.attn_query_mode not in self.ATTN_QUERY_MODES:
+            raise ValueError(
+                f"attn_query_mode 必须是 {self.ATTN_QUERY_MODES} 之一，收到: {attn_query_mode}"
             )
         self.u_score_base = float(u_score_base)
         self.u_score_scale = float(u_score_scale)
@@ -62,6 +70,11 @@ class OptiGenesis(nn.Module):
         print(
             f"   帧聚合模式 frame_agg_mode={self.frame_agg_mode} | "
             f"weight_signal={self.weight_signal} | τ={self.agg_temperature}"
+            + (
+                f" | attn_query={self.attn_query_mode}"
+                if self.frame_agg_mode == "attention"
+                else ""
+            )
             + (
                 f" | u_base={self.u_score_base} scale={self.u_score_scale}"
                 if self.weight_signal == "edl_u_amp"
@@ -94,8 +107,17 @@ class OptiGenesis(nn.Module):
             nn.Dropout(0.2),
         )
 
-        # 4. EDL 头（mean：患者级；equal / uncertainty_weighted：帧级共用同一头）
+        # 4. EDL 头（mean：患者级；equal / uncertainty_weighted / attention：帧级共用同一头）
         self.uncertainty_head = UncertaintyHead(in_features=256, num_classes=num_classes)
+
+        # 4b. 可学习帧注意力：query=患者全局融合特征，key=各帧融合特征
+        self.frame_attn_dim = 128
+        if self.frame_agg_mode == "attention":
+            self.frame_attn_q = nn.Linear(256, self.frame_attn_dim)
+            self.frame_attn_k = nn.Linear(256, self.frame_attn_dim)
+        else:
+            self.frame_attn_q = None
+            self.frame_attn_k = None
 
         # 辅助头：用于单模态辅助监督（低成本多模态改进；仍基于患者级视觉/临床特征）
         self.aux_vision_head = nn.Linear(self.vision_dim, num_classes)
@@ -179,6 +201,33 @@ class OptiGenesis(nn.Module):
                 )
             else:
                 frame_w = mask / mask.sum(dim=1, keepdim=True).clamp_min(1.0)
+        elif self.frame_agg_mode == "attention":
+            # query ← mean(特征) 或 evidence(p+) 加权特征；key = 各帧；softmax 得 w（与 EDL-u 解耦）
+            if self.frame_attn_q is None or self.frame_attn_k is None:
+                raise RuntimeError("attention 模式未初始化 frame_attn_q/k")
+            if self.attn_query_mode == "evidence":
+                # q_in = Σ_i p+_i · feat_i / Σ p+_i ；p+ = α_pos / Σα
+                s_a = alpha_frame.sum(dim=-1).clamp_min(1e-8)  # [B, N]
+                p_pos = alpha_frame[..., 1] / s_a
+                if mask is not None:
+                    p_pos = p_pos * mask
+                denom = p_pos.sum(dim=1, keepdim=True).clamp_min(1e-8)  # [B, 1]
+                q_in = (feat_fused * p_pos.unsqueeze(-1)).sum(dim=1) / denom
+            elif mask is None:
+                q_in = feat_fused.mean(dim=1)
+            else:
+                m = mask.unsqueeze(-1)
+                q_in = (feat_fused * m).sum(dim=1) / m.sum(dim=1).clamp_min(1.0)
+            q = self.frame_attn_q(q_in)  # [B, D]
+            k = self.frame_attn_k(feat_fused)  # [B, N, D]
+            scale = float(self.frame_attn_dim) ** 0.5
+            score = (k * q.unsqueeze(1)).sum(dim=-1) / scale  # [B, N]
+            if mask is not None:
+                score = score.masked_fill(mask < 0.5, -1e9)
+            frame_w = F.softmax(score / tau, dim=1)
+            if mask is not None:
+                frame_w = frame_w * mask
+                frame_w = frame_w / frame_w.sum(dim=1, keepdim=True).clamp_min(1e-8)
         elif self.weight_signal in ("topk_p", "max_p_pool"):
             # 按帧阳性概率硬选 top-k / 最大帧，等权（训练期梯度只流经选中帧）
             s = torch.sum(alpha_frame, dim=-1, keepdim=True).clamp_min(1e-8)
@@ -321,7 +370,7 @@ class OptiGenesis(nn.Module):
                     "frame_mask": frame_mask,
                 }
         else:
-            # —— equal / uncertainty_weighted：帧级 EDL 再聚合 ——
+            # —— equal / uncertainty_weighted / attention：帧级 EDL 再聚合 ——
             alpha_frame, feat_fused_frames, c_feat, v_feat_patient = self._frame_alphas_and_features(
                 v_feat, clinical, frame_mask=frame_mask
             )

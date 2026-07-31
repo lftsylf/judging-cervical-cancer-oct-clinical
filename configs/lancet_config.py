@@ -81,9 +81,14 @@ class Config:
     # mean                  : 等权均值池化特征 → 患者级 EDL（≈ v3 / baseline B1）
     # equal                 : 帧级 EDL → 等权平均 α（消融：有帧 u、无加权）
     # uncertainty_weighted  : 帧级 EDL → softmax((1−u)/τ) 加权聚合 α（Ours）
+    # attention             : 帧级 EDL → 可学习注意力加权（u 仅导出，不参与加权）
     FRAME_AGG_MODE = os.getenv("OPTIGENESIS_FRAME_AGG", "uncertainty_weighted").strip().lower()
-    # 加权温度 τ：越小越「只信最确定的几帧」；越大越接近等权
+    # 加权温度 τ：越小越「只信最确定的几帧」；越大越接近等权（attention 同样用）
     FRAME_AGG_TEMPERATURE = _env_float("OPTIGENESIS_FRAME_AGG_TEMP", 0.5)
+    # attention 的 query 构造（仅 FRAME_AGG=attention）：
+    #   mean     : 有效帧融合特征均值（旧默认；易退化成近均值池化）
+    #   evidence : 用帧级 EDL 阳性概率 p+ 对融合特征加权得到 query（打破 mean 循环）
+    FRAME_ATTN_QUERY = os.getenv("OPTIGENESIS_FRAME_ATTN_QUERY", "mean").strip().lower()
     # 帧权重信号（仅 FRAME_AGG=uncertainty_weighted 时生效）：
     #   edl_u     : softmax((1−u)/τ)，u=K/Σα（默认，历史 UW）
     #   edl_u_amp : softmax(((u_base−u)·scale)/τ)，把挤在 0.2–0.3 的 u 差放大后再加权
@@ -131,6 +136,8 @@ class Config:
     # --- 6. 不确定性 Loss 配置 ---
     # KL散度退火周期：前10个epoch主要学准确率，后面慢慢加不确定性约束
     KL_ANNEALING_EPOCHS = 10
+    # 患者级 one-hot 标签平滑 ε：y'=(1−ε)y + ε/K；0=关闭。与帧级 EDL 辅损不冲突（只改 bag 主损标签）
+    LABEL_SMOOTHING = _env_float("OPTIGENESIS_LABEL_SMOOTHING", 0.0)
 
     # WMA Loss（重加权边距调整 + EDL KL）；baseline 脚本常 export OPTIGENESIS_USE_WMA=0
     # 说明（对应 training/losses.py::wma_loss）：
@@ -148,22 +155,32 @@ class Config:
     # 默认关闭。完整三中心30轮负/正消融，每次和ema一起开启
     # ViT baseline 脚本请保持 OPTIGENESIS_ENABLE_AUX 未设置或显式 0。
     ENABLE_MULTIMODAL_AUX_LOSS = _env_bool("OPTIGENESIS_ENABLE_AUX", False)
-    AUX_LOSS_WEIGHT_VISION = 0.2
-    AUX_LOSS_WEIGHT_CLINICAL = 0.2
+    AUX_LOSS_WEIGHT_VISION = _env_float("OPTIGENESIS_AUX_W_VISION", 0.2)
+    AUX_LOSS_WEIGHT_CLINICAL = _env_float("OPTIGENESIS_AUX_W_CLINICAL", 0.2)
 
     # --- 7b. 帧级弱监督（单模态；与 multimodal Aux 无关）---
-    # 仅在 FRAME_AGG=equal / uncertainty_weighted 时生效：每帧共用患者病理标签，
-    # 对帧级 α 加一小权重的 EDL/Focal 或 CE，逼各帧 u 拉开，使不确定加权有意义。
+    # 仅在 FRAME_AGG=equal / uncertainty_weighted / attention 时生效：
+    # 对帧级 α 加一小权重的 EDL/Focal 或 CE（broadcast 或 mil，见 FRAME_AUX_MODE）。
     # 默认关闭。建议：最终方法 = Ours(uw) + 本项；旧 Ours(无帧损) 作「去掉帧级弱监督」消融。
     ENABLE_FRAME_AUX_LOSS = _env_bool("OPTIGENESIS_ENABLE_FRAME_AUX", False)
     FRAME_AUX_LOSS_WEIGHT = _env_float("OPTIGENESIS_FRAME_AUX_WEIGHT", 0.2)
     # edl：与主损失同族（Focal+EDL 或纯 EDL，随 USE_WMA/focal 开关）；ce：对 p=α/S 做交叉熵
     FRAME_AUX_LOSS_TYPE = os.getenv("OPTIGENESIS_FRAME_AUX_TYPE", "edl").strip().lower()
+    # 帧辅损模式：
+    #   broadcast — 旧法：患者标签广播到每一帧（噪声标签，易把无病灶点当阳）
+    #   mil       — MIL：阴性袋各点压阴；阳性袋若已有点够阳则不再辅损，
+    #               否则只对「最阳的那一点」施压（至少一点支持袋标签）
+    FRAME_AUX_MODE = os.getenv("OPTIGENESIS_FRAME_AUX_MODE", "broadcast").strip().lower()
+    # mil 判定「该点检出阳性」的阈值（帧阳性概率 p_pos = α_pos/Σα）
+    FRAME_AUX_MIL_POS_THR = _env_float("OPTIGENESIS_FRAME_AUX_MIL_POS_THR", 0.5)
+    # 帧辅损是否跟随患者主损使用 WMA；默认跟随。attn+broadcast 叠 WMA 时建议关（只患者级 WMA）
+    FRAME_AUX_USE_WMA = _env_bool("OPTIGENESIS_FRAME_AUX_USE_WMA", True)
 
     # --- 8. Model EMA（轻量消融：开启后每个 step 更新 shadow；验证/选模/存盘/导出均用 EMA 权重）---
     # 默认关闭；仅当 OPTIGENESIS_ENABLE_EMA=1 时开启
     ENABLE_MODEL_EMA = _env_bool("OPTIGENESIS_ENABLE_EMA", False)
-    EMA_DECAY = 0.999  # 小数据可试 0.99–0.9999；轮数少时可略降 decay 使 shadow 更快跟上
+    # 小数据 / 早停轮数少时可降到 0.99，使 shadow 更快跟上
+    EMA_DECAY = _env_float("OPTIGENESIS_EMA_DECAY", 0.999)
 
     # --- 9. 无监督域对齐 CORAL（最小 UDA；目标域=当前 fold 的 external CSV，训练时不使用其标签）---
     # 仅 CORAL（协方差对齐），在融合后 256 维特征上计算；λ 带 warmup，默认偏小以降低压制主任务的风险。

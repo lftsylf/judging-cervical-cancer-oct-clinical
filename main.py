@@ -305,6 +305,7 @@ def main():
         u_score_scale=u_score_scale,
         frame_encode_chunk=int(getattr(Config, "FRAME_ENCODE_CHUNK", 16) or 0),
         frame_topk_k=int(getattr(Config, "FRAME_TOPK_K", 5)),
+        attn_query_mode=str(getattr(Config, "FRAME_ATTN_QUERY", "mean")),
     ).to(device)
     
     freeze_backbone_epochs = int(getattr(Config, "FREEZE_BACKBONE_EPOCHS", 0) or 0)
@@ -339,15 +340,38 @@ def main():
         )
     else:
         print(" 主损失: Focal + EDL 组合（含类别权重）；数据侧仍配合过采样")
+    label_smoothing = float(getattr(Config, "LABEL_SMOOTHING", 0.0) or 0.0)
+    if label_smoothing > 0:
+        print(f" 患者级 label smoothing: ε={label_smoothing}")
     print(f" 多模态辅助监督: {getattr(Config, 'ENABLE_MULTIMODAL_AUX_LOSS', False)}")
+    if getattr(Config, "ENABLE_MULTIMODAL_AUX_LOSS", False):
+        print(
+            f"   Aux 权重: vision={getattr(Config, 'AUX_LOSS_WEIGHT_VISION', 0.2)}, "
+            f"clinical={getattr(Config, 'AUX_LOSS_WEIGHT_CLINICAL', 0.2)}"
+        )
     enable_frame_aux = bool(getattr(Config, "ENABLE_FRAME_AUX_LOSS", False))
     frame_aux_w = float(getattr(Config, "FRAME_AUX_LOSS_WEIGHT", 0.2))
     frame_aux_type = str(getattr(Config, "FRAME_AUX_LOSS_TYPE", "edl"))
+    frame_aux_mode = str(getattr(Config, "FRAME_AUX_MODE", "broadcast")).strip().lower()
+    frame_aux_mil_thr = float(getattr(Config, "FRAME_AUX_MIL_POS_THR", 0.5))
+    frame_aux_use_wma = bool(getattr(Config, "FRAME_AUX_USE_WMA", True))
+    if str(frame_agg_mode).lower() == "attention":
+        print(f" attention query: {getattr(Config, 'FRAME_ATTN_QUERY', 'mean')}")
     if enable_frame_aux:
-        print(
-            f" 帧级弱监督: 开启 (weight={frame_aux_w}, type={frame_aux_type})；"
-            f"每帧共用患者标签（单模态，非 clinical Aux）"
-        )
+        if frame_aux_mode in ("mil", "mil_gate", "atleast_one"):
+            print(
+                f" 帧级弱监督: 开启 MIL (weight={frame_aux_w}, type={frame_aux_type}, "
+                f"pos_thr={frame_aux_mil_thr})；阴性各点压阴，阳性至少一点够阳否则推最阳点"
+            )
+        else:
+            print(
+                f" 帧级弱监督: 开启 broadcast (weight={frame_aux_w}, type={frame_aux_type})；"
+                f"每帧共用患者标签（单模态，非 clinical Aux）"
+            )
+        if use_wma:
+            print(
+                f"   帧辅损跟随 WMA: {'是' if frame_aux_use_wma else '否（帧辅用 Focal/EDL）'}"
+            )
     else:
         print(" 帧级弱监督: 关闭")
     if getattr(Config, "ENABLE_DOMAIN_CORAL", False):
@@ -391,6 +415,9 @@ def main():
             enable_frame_aux=enable_frame_aux,
             frame_aux_weight=frame_aux_w,
             frame_aux_type=frame_aux_type,
+            frame_aux_mode=frame_aux_mode,
+            frame_aux_mil_pos_thr=frame_aux_mil_thr,
+            frame_aux_use_wma=frame_aux_use_wma,
             ema=ema,
             uda_target_loader=uda_target_loader,
             lambda_coral_max=(
@@ -399,6 +426,7 @@ def main():
                 else 0.0
             ),
             coral_warmup_epochs=getattr(Config, "CORAL_WARMUP_EPOCHS", 8),
+            label_smoothing=label_smoothing,
         )
         
         # 验证：计算完整指标（开启 EMA 时用 shadow 权重做评估）

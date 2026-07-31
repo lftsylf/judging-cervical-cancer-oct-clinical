@@ -1,22 +1,17 @@
 #!/usr/bin/env bash
-# Paper v4 · 每 TIFF 前 5 页（N≈60）+ edl@0.3 + edl_u_amp
-# score = (u_base − u) · scale，再 softmax(/τ)
-#   u_base=0.5；scale=10；τ=0.5
+# Paper v4 · N=12 + FrameAux edl@0.3 + MIL 帧辅损（探路 seed=42）
 #
-# 辽宁 TIFF 本就 ≈5 页 → N≈60；华西/湘雅截断前 5 页 → 也 N≈60（不再用满 10 页/120 帧）
-# batch pad+mask，padding 不进聚合
+# MIL（相对旧 broadcast）：
+#   - 阴性袋：各有效点压阴
+#   - 阳性袋：若已有点 p_pos≥thr → 不再做帧辅损（袋级主损失仍在）
+#             否则只对最阳的那一点往阳推
 #
-# 默认：3 折并行占 GPU 0/1/2（本机 4×2080），BATCH=8；GPU 3 空着备用。
-#   OPTIGENESIS_PARALLEL=0  → 串行
-#   OPTIGENESIS_GPUS="0 1 2 3" → 指定卡
+# 聚合仍用主候选 edl_u（τ=0.5），只改监督方式，便于对照。
+# 默认占 GPU 1/2/3（GPU0 可能仍在跑 amp）；可用 OPTIGENESIS_GPUS 覆盖。
 #
 # 用法:
 #   ./run_experiment.sh --detach ./tsy_loho \
-#     ./scripts/paper_v4_run/run_expand_pages_edl03_uamp_t2_oct_only.sh
-#
-# 看日志:
-#   tail -f logs/detached_latest.log
-#   tail -f outputs/.../huaxi/seed_42/logs/train_console.log
+#     ./scripts/paper_v4_run/run_n12_edl03_mil_t2_oct_only.sh
 #
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -24,45 +19,57 @@ cd "$ROOT"
 export PATH="/home/amax/anaconda3/bin:${PATH:-}"
 PYTHON="${PYTHON:-python}"
 
-export OPTIGENESIS_EXPAND_TIFF_PAGES=1
-# N≈60 时 B=8 在 8GB 上可跑（~7.5GB）；OOM 再降到 4
-export OPTIGENESIS_BATCH_SIZE="${OPTIGENESIS_BATCH_SIZE:-8}"
-export OPTIGENESIS_MAX_PAGES_PER_TIFF="${OPTIGENESIS_MAX_PAGES_PER_TIFF:-5}"
-export OPTIGENESIS_FRAME_ENCODE_CHUNK="${OPTIGENESIS_FRAME_ENCODE_CHUNK:-8}"
+export OPTIGENESIS_EXPAND_TIFF_PAGES=0
+unset OPTIGENESIS_MAX_PAGES_PER_TIFF 2>/dev/null || true
+export OPTIGENESIS_BATCH_SIZE="${OPTIGENESIS_BATCH_SIZE:-4}"
+export OPTIGENESIS_EPOCHS="${OPTIGENESIS_EPOCHS:-30}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 export OPTIGENESIS_FRAME_AGG=uncertainty_weighted
 export OPTIGENESIS_FRAME_AGG_TEMP="${OPTIGENESIS_FRAME_AGG_TEMP:-0.5}"
-export OPTIGENESIS_FRAME_WEIGHT_SIGNAL=edl_u_amp
-export OPTIGENESIS_FRAME_U_SCORE_BASE="${OPTIGENESIS_FRAME_U_SCORE_BASE:-0.5}"
-export OPTIGENESIS_FRAME_U_SCORE_SCALE="${OPTIGENESIS_FRAME_U_SCORE_SCALE:-10}"
+export OPTIGENESIS_FRAME_WEIGHT_SIGNAL=edl_u
+unset OPTIGENESIS_FRAME_U_SCORE_BASE OPTIGENESIS_FRAME_U_SCORE_SCALE 2>/dev/null || true
 
 export OPTIGENESIS_ENABLE_FRAME_AUX=1
 export OPTIGENESIS_FRAME_AUX_WEIGHT=0.3
 export OPTIGENESIS_FRAME_AUX_TYPE=edl
+export OPTIGENESIS_FRAME_AUX_MODE=mil
+export OPTIGENESIS_FRAME_AUX_MIL_POS_THR="${OPTIGENESIS_FRAME_AUX_MIL_POS_THR:-0.5}"
+
 export OPTIGENESIS_USE_WMA=0
 export OPTIGENESIS_ENABLE_EMA=0
 export OPTIGENESIS_ENABLE_AUX=0
 export OPTIGENESIS_USE_CLINICAL=0
 
-OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-outputs/paper_v4/baseline/ours_uw_frameaux_t2_edl_w0.3_expand_uamp10_pages5}"
+OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-outputs/paper_v4/baseline/ours_uw_frameaux_t2_edl_w0.3_n12_mil}"
 unset OPTIGENESIS_OUTPUT_DIR 2>/dev/null || true
 mkdir -p "$OUT_ROOT"
 
 SEEDS=(42)
 HOSPITALS=(huaxi liaoning xiangya)
-# 本机 4 卡：3 折占 0/1/2；留 3 备用（折数只有 3）
 PARALLEL="${OPTIGENESIS_PARALLEL:-1}"
-read -r -a GPUS <<< "${OPTIGENESIS_GPUS:-0 1 2 3}"
+# 默认避开可能仍占用的 GPU0
+read -r -a GPUS <<< "${OPTIGENESIS_GPUS:-1 2 3}"
 
 echo "======================================"
-echo "pages≤5 (N≈60) + edl@0.3 + edl_u_amp"
-echo "  EXPAND=$OPTIGENESIS_EXPAND_TIFF_PAGES  MAX_PAGES=$OPTIGENESIS_MAX_PAGES_PER_TIFF"
-echo "  BATCH=$OPTIGENESIS_BATCH_SIZE  CHUNK=$OPTIGENESIS_FRAME_ENCODE_CHUNK"
-echo "  signal=$OPTIGENESIS_FRAME_WEIGHT_SIGNAL  u_base=$OPTIGENESIS_FRAME_U_SCORE_BASE  scale=$OPTIGENESIS_FRAME_U_SCORE_SCALE  τ=$OPTIGENESIS_FRAME_AGG_TEMP"
+echo "N=12 + edl@0.3 + MIL 帧辅损（探路）"
+echo "  signal=edl_u  τ=$OPTIGENESIS_FRAME_AGG_TEMP"
+echo "  FRAME_AUX mode=$OPTIGENESIS_FRAME_AUX_MODE weight=$OPTIGENESIS_FRAME_AUX_WEIGHT type=$OPTIGENESIS_FRAME_AUX_TYPE thr=$OPTIGENESIS_FRAME_AUX_MIL_POS_THR"
 echo "  PARALLEL=$PARALLEL  GPUS=${GPUS[*]}"
 echo "  OUT=$OUT_ROOT"
 echo "======================================"
+
+need_split=0
+for h in "${HOSPITALS[@]}"; do
+  if [[ ! -f "$ROOT/dataset/train_${h}.csv" || ! -f "$ROOT/dataset/val_${h}.csv" ]]; then
+    need_split=1
+  fi
+done
+if [[ "$need_split" == "1" ]]; then
+  "$PYTHON" data/prepare_paper_v4_splits.py --write --split-seed 20260720 --val-ratio 0.2
+else
+  echo "✅ 已找到 train/val CSV"
+fi
 
 run_one() {
   local h="$1" s="$2" gpu="$3"
@@ -77,7 +84,12 @@ run_one() {
     mkdir -p "$LOG_DIR"
     local RUN_LOG="${LOG_DIR}/train_console.log"
 
-    echo ">>> $h seed=$s  GPU=$gpu (visible=0)  → $RUN_LOG"
+    if [[ "${SKIP_COMPLETED:-1}" == "1" && -f "$RUN_LOG" ]] && grep -q "训练完成！" "$RUN_LOG"; then
+      echo "⏭️  跳过 $h seed=$s"
+      exit 0
+    fi
+
+    echo ">>> $h seed=$s  GPU=$gpu → $RUN_LOG"
     "$PYTHON" main.py 2>&1 | tee "$RUN_LOG"
     echo "<<< 完成 $h seed=$s  GPU=$gpu"
   )
@@ -91,9 +103,7 @@ for h in "${HOSPITALS[@]}"; do
   for s in "${SEEDS[@]}"; do
     gpu="${GPUS[$((GPU_IDX % ${#GPUS[@]}))]}"
     GPU_IDX=$((GPU_IDX + 1))
-
     if [[ "$PARALLEL" == "1" ]]; then
-      # 卡槽已满时先等一批，避免 4 折抢同一卡
       if (( ${#JOBS[@]} >= ${#GPUS[@]} )); then
         if ! wait "${JOBS[0]}"; then FAIL=1; fi
         JOBS=("${JOBS[@]:1}")
@@ -118,3 +128,4 @@ if [[ "$FAIL" -ne 0 ]]; then
   exit 1
 fi
 echo "完成 → $OUT_ROOT"
+echo "对照主候选 broadcast: outputs/paper_v4/baseline/ours_uw_frameaux_t2_edl_w0.3/"

@@ -80,6 +80,66 @@ def _patient_edl_loss(
     )
 
 
+def _frame_aux_select_mask(
+    frame_alpha,
+    labels,
+    frame_mask=None,
+    mode="broadcast",
+    mil_pos_thr=0.5,
+):
+    """
+    决定哪些帧参与帧辅损、以及每帧用什么标签。
+
+    返回:
+      select: [B, N] bool — 是否计入辅损
+      frame_labels: [B, N] long — 该帧监督标签（仅 select 处有意义）
+
+    mode=broadcast: 所有有效帧共用患者标签。
+    mode=mil:
+      - 阴性患者：所有有效帧 → 阴
+      - 阳性患者：若 max(p_pos)≥thr（已有点「检出阳」）→ 本袋不再做帧辅损
+                 否则只对 p_pos 最大的那一帧 → 阳（往阳性推）
+    """
+    b, n, k = frame_alpha.shape
+    if frame_mask is not None:
+        valid = frame_mask > 0.5
+    else:
+        valid = torch.ones(b, n, dtype=torch.bool, device=frame_alpha.device)
+
+    frame_labels = labels.unsqueeze(1).expand(-1, n).clone()
+    mode = str(mode).lower().strip()
+    if mode in ("", "broadcast", "all"):
+        return valid, frame_labels
+
+    if mode not in ("mil", "mil_gate", "atleast_one"):
+        raise ValueError(f"未知 FRAME_AUX_MODE={mode!r}（支持 broadcast / mil）")
+
+    # p_pos = α_1 / Σα
+    s = frame_alpha.sum(dim=-1).clamp_min(1e-8)  # [B, N]
+    p_pos = frame_alpha[..., 1] / s
+    neg_inf = p_pos.new_full((), -1.0e9)
+    p_for_max = torch.where(valid, p_pos, neg_inf)
+    max_p, max_idx = p_for_max.max(dim=1)  # [B], [B]
+
+    is_neg = labels == 0
+    is_pos = labels == 1
+    covered = max_p >= float(mil_pos_thr)  # 阳性袋里是否已有点够阳
+
+    select = torch.zeros(b, n, dtype=torch.bool, device=frame_alpha.device)
+    # 阴性：各有效点压阴
+    select = select | (is_neg.unsqueeze(1) & valid)
+    # 阳性且未覆盖：只压最阳的那一点往阳
+    need_push = is_pos & (~covered) & (max_p > neg_inf)  # 至少有一个有效帧
+    if bool(need_push.any()):
+        b_idx = torch.arange(b, device=frame_alpha.device)[need_push]
+        n_idx = max_idx[need_push]
+        select[b_idx, n_idx] = True
+        frame_labels[b_idx, n_idx] = 1
+    # 阳性且已覆盖：select 保持 False → 帧辅损为 0（袋级主损失仍在）
+
+    return select, frame_labels
+
+
 def _frame_aux_loss(
     frame_alpha,
     labels,
@@ -96,24 +156,29 @@ def _frame_aux_loss(
     kl_annealing_epochs=10,
     loss_type="edl",
     frame_mask=None,
+    frame_aux_mode="broadcast",
+    mil_pos_thr=0.5,
 ):
     """
-    帧级弱监督：每帧共用患者标签。
+    帧级弱监督。
     frame_alpha: [B, N, K]
     frame_mask: 可选 [B, N]，只对有效帧（非 pad）计损失。
+    frame_aux_mode: broadcast（旧广播）或 mil（阴性全压 / 阳性至少一点）。
     """
     b, n, k = frame_alpha.shape
-    if frame_mask is not None:
-        valid = frame_mask > 0.5  # [B, N]
-        if not bool(valid.any()):
-            return frame_alpha.new_zeros(())
-        alpha_flat = frame_alpha[valid]  # [M, K]
-        y_flat = y_onehot.unsqueeze(1).expand(-1, n, -1)[valid]
-        labels_flat = labels.unsqueeze(1).expand(-1, n)[valid]
-    else:
-        alpha_flat = frame_alpha.reshape(b * n, k)
-        y_flat = y_onehot.unsqueeze(1).expand(-1, n, -1).reshape(b * n, k)
-        labels_flat = labels.unsqueeze(1).expand(-1, n).reshape(b * n)
+    select, frame_labels = _frame_aux_select_mask(
+        frame_alpha,
+        labels,
+        frame_mask=frame_mask,
+        mode=frame_aux_mode,
+        mil_pos_thr=mil_pos_thr,
+    )
+    if not bool(select.any()):
+        return frame_alpha.new_zeros(())
+
+    alpha_flat = frame_alpha[select]  # [M, K]
+    labels_flat = frame_labels[select]
+    y_flat = F.one_hot(labels_flat, num_classes=k).float()
 
     if str(loss_type).lower() == "ce":
         # p = α / Σα，对 log p 做 CE（弱监督，数值上简单）
@@ -158,10 +223,14 @@ def train_epoch(
     enable_frame_aux=False,
     frame_aux_weight=0.2,
     frame_aux_type="edl",
+    frame_aux_mode="broadcast",
+    frame_aux_mil_pos_thr=0.5,
+    frame_aux_use_wma=True,
     ema=None,
     uda_target_loader=None,
     lambda_coral_max=0.0,
     coral_warmup_epochs=8,
+    label_smoothing=0.0,
 ):
     model.train()
     running_loss = 0.0
@@ -180,8 +249,13 @@ def train_epoch(
         labels = labels.to(device)
         frame_mask = frame_mask.to(device)
         
-        # One-hot 标签 (EDL Loss 需要)
+        # One-hot 标签 (EDL Loss 需要)；可选患者级 label smoothing（仅主损，帧辅损仍用硬标签）
         y_onehot = F.one_hot(labels, num_classes=2).float()
+        y_onehot_hard = y_onehot
+        eps_ls = float(label_smoothing or 0.0)
+        if eps_ls > 0.0:
+            k = y_onehot.shape[-1]
+            y_onehot = (1.0 - eps_ls) * y_onehot + eps_ls / float(k)
         
         optimizer.zero_grad()
         
@@ -257,19 +331,19 @@ def train_epoch(
             )
             loss = loss + float(aux_w_vision) * aux_loss_v + float(aux_w_clinical) * aux_loss_c
 
-        # 可选：帧级弱监督（每帧共用患者标签；非多模态）
+        # 可选：帧级弱监督（broadcast=旧广播；mil=阴性全压/阳性至少一点；非多模态）
         if need_frame and frame_details is not None:
             frame_alpha = frame_details.get("frame_alpha")
             if frame_alpha is not None:
                 floss = _frame_aux_loss(
                     frame_alpha,
                     labels,
-                    y_onehot,
+                    y_onehot_hard,
                     epoch,
                     total_epochs,
                     class_weights=class_weights,
                     use_focal=use_focal,
-                    use_wma=use_wma,
+                    use_wma=(use_wma and bool(frame_aux_use_wma)),
                     train_class_counts=train_class_counts,
                     wma_c=wma_c,
                     wma_warmup_epochs=wma_warmup_epochs,
@@ -277,6 +351,8 @@ def train_epoch(
                     kl_annealing_epochs=kl_annealing_epochs,
                     loss_type=frame_aux_type,
                     frame_mask=frame_mask,
+                    frame_aux_mode=frame_aux_mode,
+                    mil_pos_thr=frame_aux_mil_pos_thr,
                 )
                 loss = loss + float(frame_aux_weight) * floss
         # 可选：CORAL（无标签目标域 = 外部折，仅用特征统计对齐）

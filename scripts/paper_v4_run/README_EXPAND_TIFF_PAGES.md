@@ -10,7 +10,9 @@
 
 ```bash
 export OPTIGENESIS_EXPAND_TIFF_PAGES=1
-export OPTIGENESIS_BATCH_SIZE=1          # 强烈建议；N=60~120 易 OOM
+export OPTIGENESIS_BATCH_SIZE=4          # 8GB+chunk 可跑；OOM 再降到 2
+# 3 折并行（GPU 0/1/2）：脚本默认 OPTIGENESIS_PARALLEL=1
+# export OPTIGENESIS_GPUS="0 1 2 3"     # 要用满 4 卡时改这里（第 4 个槽给多 seed）
 # 可选：每 TIFF 最多取前 K 页（0=不截断）
 export OPTIGENESIS_MAX_PAGES_PER_TIFF=0
 ```

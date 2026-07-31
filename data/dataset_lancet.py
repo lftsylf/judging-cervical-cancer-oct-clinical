@@ -304,15 +304,21 @@ def get_dataloader(csv_path, mode='train', seed=None):
     expand = bool(getattr(Config, "EXPAND_TIFF_PAGES", False))
     max_pages = int(getattr(Config, "MAX_PAGES_PER_TIFF", 0) or 0)
     if expand:
+        if max_pages and max_pages > 0:
+            n_hint = f"每 TIFF 最多 {max_pages} 页 → 约 {12 * max_pages} 帧/人（三中心对齐）"
+        else:
+            n_hint = "辽宁≈60 帧/人，华西/湘雅≈120（不截断）"
         print(
             f"📽️ [Data] TIFF 全时序展开已开启 "
             f"(EXPAND_TIFF_PAGES=1, MAX_PAGES_PER_TIFF={max_pages or '不截断'})；"
-            f"辽宁≈60 帧/人，华西/湘雅≈120；batch 内 pad + frame_mask"
+            f"{n_hint}；batch 内 pad + frame_mask"
         )
-        if int(getattr(Config, "BATCH_SIZE", 4)) > 2:
+        # N≈120 时 B>2 易 OOM；N≈60（pages≤5）时 B=8 通常可跑
+        bs = int(getattr(Config, "BATCH_SIZE", 4))
+        if (not max_pages or max_pages > 5) and bs > 2:
             print(
-                f"⚠️ [Data] 当前 BATCH_SIZE={Config.BATCH_SIZE}，展开多页后易 OOM，"
-                f"建议 export OPTIGENESIS_BATCH_SIZE=1 或 2"
+                f"⚠️ [Data] 当前 BATCH_SIZE={bs}，全页展开（N≈120）易 OOM，"
+                f"建议 export OPTIGENESIS_BATCH_SIZE=1 或 2，或 MAX_PAGES_PER_TIFF=5"
             )
     
     # --- 核心策略: 训练集使用加权采样解决不平衡 ---
