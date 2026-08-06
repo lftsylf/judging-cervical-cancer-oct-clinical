@@ -58,6 +58,16 @@ class Config:
     EXPAND_TIFF_PAGES = _env_bool("OPTIGENESIS_EXPAND_TIFF_PAGES", False)
     # 每个 TIFF 最多取前多少页；0=不截断（辽宁常见 5，华西/湘雅常见 10）
     MAX_PAGES_PER_TIFF = _env_int("OPTIGENESIS_MAX_PAGES_PER_TIFF", 0)
+    # --- site-bag 协议（湘雅内部 n 点×全页；val/test 多窗 OR）---
+    # 开启后：每次只取 SITEBAG_N 个钟点 TIFF，并强制展开该 TIFF 全部页；
+    # 训练按 pos_sites 优先组袋；val/external 按钟点不重叠切窗，validate 内按患者 OR。
+    SITEBAG_ENABLE = _env_bool("OPTIGENESIS_SITEBAG", False)
+    SITEBAG_N = _env_int("OPTIGENESIS_SITEBAG_N", 2)
+    # soft OR：患者分 = max(窗概率)，用于 AUC/早停；硬判定 ≡ max_p>0.5（任一窗>0.5）
+    # 兼容旧开关：SITEBAG_EVAL_OR=0 时强制用 mean（弱化）
+    SITEBAG_EVAL_OR = _env_bool("OPTIGENESIS_SITEBAG_EVAL_OR", True)
+    # 多窗聚合成患者分：max（默认 OR）| mean（弱化）| first（只取第一窗，相当于关多窗 OR）
+    SITEBAG_EVAL_AGG = os.getenv("OPTIGENESIS_SITEBAG_EVAL_AGG", "max").strip().lower()
     # 骨干按帧分块前向（+checkpoint），展开 N=120 时防 OOM；0=不分块
     FRAME_ENCODE_CHUNK = _env_int("OPTIGENESIS_FRAME_ENCODE_CHUNK", 16)
     # 默认 4；展开多页后极易 OOM，可 export OPTIGENESIS_BATCH_SIZE=1

@@ -12,7 +12,7 @@ import torch
 class ModelEMA:
     def __init__(self, model: torch.nn.Module, decay: float = 0.999):
         if not (0.0 < decay < 1.0):
-            raise ValueError("EMA decay must be in (0, 1)")
+            raise ValueError("EMA decay 必须在开区间 (0, 1) 内")
         self.decay = float(decay)
         self.shadow = {}
         self.backup = {}

@@ -243,7 +243,7 @@ def train_epoch(
     
     pbar = tqdm(loader, desc=f"训练 {epoch+1}/{total_epochs}")
     for batch in pbar:
-        imgs, clinical, labels, frame_mask = unpack_loader_batch(batch)
+        imgs, clinical, labels, frame_mask, _group_ids = unpack_loader_batch(batch)
         imgs = imgs.to(device)
         clinical = clinical.to(device)
         labels = labels.to(device)
@@ -261,7 +261,7 @@ def train_epoch(
         
         if use_coral:
             t_batch = next(target_iter)
-            imgs_t, clin_t, _, mask_t = unpack_loader_batch(t_batch)
+            imgs_t, clin_t, _, mask_t, _ = unpack_loader_batch(t_batch)
             imgs_t, clin_t = imgs_t.to(device), clin_t.to(device)
             mask_t = mask_t.to(device)
 
@@ -397,6 +397,7 @@ def validate(
     probs = []
     uncertainties = []
     targets = []
+    group_ids_all = []
     losses = []
     # 帧级明细（uncertainty_weighted / equal 时有意义；mean 模式为占位）
     frame_uncertainties_all = []
@@ -406,7 +407,7 @@ def validate(
     # 收集所有batch的预测结果和损失
     with torch.no_grad():
         for batch in loader:
-            imgs, clinical, labels, frame_mask = unpack_loader_batch(batch)
+            imgs, clinical, labels, frame_mask, group_ids = unpack_loader_batch(batch)
             imgs = imgs.to(device)
             clinical = clinical.to(device)
             labels = labels.to(device)
@@ -448,6 +449,7 @@ def validate(
             probs.extend(p[:, 1].cpu().numpy())  # 取阳性概率
             uncertainties.extend(u.cpu().numpy().flatten())
             targets.extend(labels.cpu().numpy())
+            group_ids_all.extend(group_ids.detach().cpu().numpy().tolist())
 
             fu = frame_details["frame_uncertainty"].detach().cpu().numpy()
             fw = frame_details["frame_weights"].detach().cpu().numpy()
@@ -459,6 +461,61 @@ def validate(
     probs = np.array(probs)
     targets = np.array(targets)
     uncertainties = np.array(uncertainties)
+    group_ids_all = np.asarray(group_ids_all, dtype=np.int64)
+
+    # site-bag：多窗 → 患者级聚合（max / mean / first）
+    try:
+        from configs.lancet_config import Config as _Cfg
+        sitebag_on = bool(getattr(_Cfg, "SITEBAG_ENABLE", False))
+        eval_or = bool(getattr(_Cfg, "SITEBAG_EVAL_OR", True))
+        agg_mode = str(getattr(_Cfg, "SITEBAG_EVAL_AGG", "max")).strip().lower()
+        if not eval_or and agg_mode == "max":
+            agg_mode = "mean"  # 旧开关：关 OR → 弱化为 mean
+    except Exception:
+        sitebag_on = False
+        agg_mode = "max"
+    if sitebag_on and agg_mode in ("max", "mean", "first", "avg") and len(group_ids_all) == len(probs):
+        if agg_mode == "avg":
+            agg_mode = "mean"
+        uniq = []
+        seen = set()
+        for g in group_ids_all.tolist():
+            if g not in seen:
+                seen.add(g)
+                uniq.append(g)
+        agg_probs, agg_targets, agg_unc = [], [], []
+        for g in uniq:
+            mask = group_ids_all == g
+            wp = probs[mask]
+            wt = targets[mask]
+            wu = uncertainties[mask]
+            if agg_mode == "mean":
+                agg_probs.append(float(np.mean(wp)))
+                agg_unc.append(float(np.mean(wu)))
+            elif agg_mode == "first":
+                agg_probs.append(float(wp[0]))
+                agg_unc.append(float(wu[0]))
+            else:  # max soft-OR
+                agg_probs.append(float(np.max(wp)))
+                agg_unc.append(float(np.min(wu)))
+            agg_targets.append(int(np.bincount(wt.astype(int)).argmax()))
+        n_win = len(probs)
+        probs = np.asarray(agg_probs, dtype=np.float64)
+        targets = np.asarray(agg_targets, dtype=np.int64)
+        uncertainties = np.asarray(agg_unc, dtype=np.float64)
+        frame_uncertainties_all = []
+        frame_weights_all = []
+        review_indices_all = []
+        if verbose:
+            hard_note = {
+                "max": "硬判≡max_p>0.5（≡任一窗>0.5）",
+                "mean": "硬判≡mean_p>0.5",
+                "first": "硬判≡第一窗 p>0.5",
+            }.get(agg_mode, "")
+            print(
+                f"   >> [SiteBag agg={agg_mode}] 窗样本 {n_win} → 患者 {len(probs)} "
+                f"({hard_note})"
+            )
     if frame_uncertainties_all:
         # 全时序展开后辽宁 N≈60、华西/湘雅 N≈120；batch_size=1 时各 batch 的 N 不同
         frame_uncertainties_arr = _pad_stack_2d(frame_uncertainties_all, pad_value=0.0)

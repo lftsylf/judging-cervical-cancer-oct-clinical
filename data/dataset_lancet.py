@@ -124,26 +124,6 @@ def _black_tensor(transform) -> torch.Tensor:
     return transforms.ToTensor()(image)
 
 
-def collate_patient_frames(batch):
-    """
-    将变长帧序列 pad 到 batch 内最大 N，并返回 frame_mask（1=有效帧，0=padding）。
-    返回: imgs [B,N,C,H,W], clinical [B,3], labels [B], frame_mask [B,N]
-    """
-    imgs, clinicals, labels = zip(*batch)
-    max_n = max(int(x.shape[0]) for x in imgs)
-    b = len(imgs)
-    _, c, h, w = imgs[0].shape
-    out = imgs[0].new_zeros((b, max_n, c, h, w))
-    mask = imgs[0].new_zeros((b, max_n))
-    for i, x in enumerate(imgs):
-        n = int(x.shape[0])
-        out[i, :n] = x
-        mask[i, :n] = 1.0
-    clinical = torch.stack(clinicals, dim=0)
-    label_t = torch.stack(labels, dim=0)
-    return out.contiguous(), clinical, label_t, mask
-
-
 class LancetMultiCenterDataset(Dataset):
     def __init__(self, csv_path, mode='train', transform=None, oversample_positive=True):
         """
@@ -154,29 +134,145 @@ class LancetMultiCenterDataset(Dataset):
         """
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"CSV文件未找到: {csv_path}")
-            
+
         self.df = pd.read_csv(csv_path)
         self.mode = mode
         self.transform = transform
         self.oversample_positive = oversample_positive and (mode == 'train')
         self.expand_tiff_pages = bool(getattr(Config, "EXPAND_TIFF_PAGES", False))
         self.max_pages_per_tiff = int(getattr(Config, "MAX_PAGES_PER_TIFF", 0) or 0)
-        
+        self.sitebag = bool(getattr(Config, "SITEBAG_ENABLE", False))
+        self.sitebag_n = int(getattr(Config, "SITEBAG_N", 2) or 2)
+
         # 简单清洗: 必须有病理标签
-        self.df = self.df.dropna(subset=['pathology_class'])
-        
-        # 预计算 Labels 用于采样
-        self.labels = [int(x) for x in self.df['pathology_class']]
+        self.df = self.df.dropna(subset=['pathology_class']).reset_index(drop=True)
+
+        # site-bag：训练按患者；val/test 展开为多窗样本
+        self._samples = None  # list of dicts
+        if self.sitebag:
+            self._build_sitebag_index()
+            self.labels = [int(s["label"]) for s in self._samples]
+        else:
+            self.labels = [int(x) for x in self.df['pathology_class']]
+
+    def _build_sitebag_index(self):
+        from data.sitebag_utils import (
+            choose_train_sites,
+            iter_eval_windows,
+            list_clock_to_tiff,
+            sites_from_str,
+        )
+
+        samples = []
+        for p_idx, row in self.df.iterrows():
+            label = int(row["pathology_class"])
+            img_folder = os.path.join(Config.DATA_ROOT, row["image_folder"])
+            clock_map = list_clock_to_tiff(img_folder)
+            available = sorted(clock_map.keys())
+            pos_sites = sites_from_str(row["pos_sites"]) if "pos_sites" in row.index else []
+            oct_id = str(row.get("oct_id", p_idx))
+            center = str(row.get("center", "")) if "center" in row.index else ""
+
+            if self.mode == "train":
+                samples.append(
+                    {
+                        "patient_idx": int(p_idx),
+                        "group_id": int(p_idx),
+                        "oct_id": oct_id,
+                        "center": center,
+                        "label": label,
+                        "pos_sites": pos_sites,
+                        "available": available,
+                        "clock_map": clock_map,
+                        "img_folder": img_folder,
+                        "row": row,
+                        "window_sites": None,  # 训练时在线采样
+                    }
+                )
+            else:
+                windows = iter_eval_windows(available, self.sitebag_n)
+                if not windows:
+                    windows = [available[: self.sitebag_n] or [1]]
+                for w_i, sites in enumerate(windows):
+                    samples.append(
+                        {
+                            "patient_idx": int(p_idx),
+                            "group_id": int(p_idx),
+                            "window_id": int(w_i),
+                            "oct_id": oct_id,
+                            "center": center,
+                            "label": label,
+                            "pos_sites": pos_sites,
+                            "available": available,
+                            "clock_map": clock_map,
+                            "img_folder": img_folder,
+                            "row": row,
+                            "window_sites": list(sites),
+                        }
+                    )
+        self._samples = samples
+        n_pat = len(self.df)
+        n_samp = len(samples)
+        print(
+            f"📦 [SiteBag] mode={self.mode} patients={n_pat} samples={n_samp} "
+            f"n_bag={self.sitebag_n} (val/test 多窗；train 每患者 1 袋)"
+        )
 
     def __len__(self):
+        if self.sitebag:
+            return len(self._samples)
         return len(self.df)
 
+    def _clinical_and_label_from_row(self, row):
+        def get_safe_float(val, default):
+            try:
+                if pd.isna(val) or val == '' or str(val).strip().lower() == 'nan':
+                    return float(default)
+                return float(val)
+            except Exception:
+                return float(default)
+
+        age = (get_safe_float(row.get('age'), 45) - 45.0) / 15.0
+        hpv = get_safe_float(row.get('hpv_status'), 0)
+        tct = get_safe_float(row.get('tct_result'), 0)
+        clinical_vec = torch.tensor([age, hpv, tct], dtype=torch.float32)
+        label = torch.tensor(int(row.get('pathology_class', 0)), dtype=torch.long)
+        return clinical_vec, label
+
+    def _load_sites_tensor(self, img_folder, clock_map, sites, expand_pages):
+        images = []
+        for clock in sites:
+            tiff_file = clock_map.get(int(clock))
+            if tiff_file is None:
+                images.append(_black_tensor(self.transform))
+                continue
+            img_path = os.path.join(img_folder, tiff_file)
+            try:
+                pil_pages = load_tiff_as_pil_pages(
+                    img_path,
+                    expand_pages=expand_pages,
+                    max_pages=self.max_pages_per_tiff,
+                )
+                for image in pil_pages:
+                    if self.transform:
+                        images.append(self.transform(image).contiguous())
+                    else:
+                        images.append(transforms.ToTensor()(image))
+            except Exception:
+                images.append(_black_tensor(self.transform))
+        if not images:
+            images.append(_black_tensor(self.transform))
+        return torch.stack(images).contiguous()
+
     def __getitem__(self, idx):
+        if self.sitebag:
+            return self._getitem_sitebag(idx)
+
         row = self.df.iloc[idx]
-        
+
         # --- 1. 图像处理（多点位 TIFF；可选展开每文件全部时序页）---
         img_folder = os.path.join(Config.DATA_ROOT, row['image_folder'])
-        
+
         tiff_files = sorted(
             [
                 f
@@ -184,7 +280,7 @@ class LancetMultiCenterDataset(Dataset):
                 if f.lower().endswith(".tiff") or f.lower().endswith(".tif")
             ]
         )
-        
+
         images = []
         for tiff_file in tiff_files:
             img_path = os.path.join(img_folder, tiff_file)
@@ -202,43 +298,89 @@ class LancetMultiCenterDataset(Dataset):
                         images.append(transforms.ToTensor()(image))
             except Exception:
                 images.append(_black_tensor(self.transform))
-        
+
         if len(images) == 0:
             images.append(_black_tensor(self.transform))
-        
+
         # [N, C, H, W]；展开后辽宁≈60、华西/湘雅≈120；未展开≈12
         images_tensor = torch.stack(images).contiguous()
+        clinical_vec, label = self._clinical_and_label_from_row(row)
+        group_id = torch.tensor(int(idx), dtype=torch.long)
+        return images_tensor, clinical_vec, label, group_id
 
-        # --- 2. 临床特征 (HPV, TCT, Age) ---
-        def get_safe_float(val, default):
-            try:
-                if pd.isna(val) or val == '' or str(val).strip().lower() == 'nan':
-                    return float(default)
-                return float(val)
-            except Exception:
-                return float(default)
+    def _getitem_sitebag(self, idx):
+        from data.sitebag_utils import choose_train_sites
 
-        age = (get_safe_float(row.get('age'), 45) - 45.0) / 15.0
-        hpv = get_safe_float(row.get('hpv_status'), 0)
-        tct = get_safe_float(row.get('tct_result'), 0)
-        
-        clinical_vec = torch.tensor([age, hpv, tct], dtype=torch.float32)
-        
-        label = int(row.get('pathology_class', 0))
-        label = torch.tensor(label, dtype=torch.long)
-        
-        return images_tensor, clinical_vec, label
+        s = self._samples[idx]
+        row = s["row"]
+        if self.mode == "train":
+            sites = choose_train_sites(
+                s["available"],
+                s["label"],
+                s["pos_sites"],
+                self.sitebag_n,
+                np.random.RandomState(random.randint(0, 10**9)),
+            )
+        else:
+            sites = list(s["window_sites"])
+
+        # site-bag 强制读满页
+        images_tensor = self._load_sites_tensor(
+            s["img_folder"], s["clock_map"], sites, expand_pages=True
+        )
+        clinical_vec, label = self._clinical_and_label_from_row(row)
+        group_id = torch.tensor(int(s["group_id"]), dtype=torch.long)
+        return images_tensor, clinical_vec, label, group_id
+
+
+def collate_patient_frames(batch):
+    """
+    将变长帧序列 pad 到 batch 内最大 N，并返回 frame_mask（1=有效帧，0=padding）。
+    兼容:
+      (imgs, clinical, label)
+      (imgs, clinical, label, group_id)
+    返回: imgs [B,N,C,H,W], clinical [B,3], labels [B], frame_mask [B,N], group_ids [B]
+    """
+    if len(batch[0]) == 4:
+        imgs, clinicals, labels, group_ids = zip(*batch)
+        group_t = torch.stack(
+            [g if torch.is_tensor(g) else torch.tensor(int(g), dtype=torch.long) for g in group_ids],
+            dim=0,
+        )
+    elif len(batch[0]) == 3:
+        imgs, clinicals, labels = zip(*batch)
+        group_t = torch.arange(len(imgs), dtype=torch.long)
+    else:
+        raise ValueError(f"意外的 sample 长度: {len(batch[0])}")
+
+    max_n = max(int(x.shape[0]) for x in imgs)
+    b = len(imgs)
+    _, c, h, w = imgs[0].shape
+    out = imgs[0].new_zeros((b, max_n, c, h, w))
+    mask = imgs[0].new_zeros((b, max_n))
+    for i, x in enumerate(imgs):
+        n = int(x.shape[0])
+        out[i, :n] = x
+        mask[i, :n] = 1.0
+    clinical = torch.stack(clinicals, dim=0)
+    label_t = torch.stack(labels, dim=0)
+    return out.contiguous(), clinical, label_t, mask, group_t
 
 
 def unpack_loader_batch(batch):
-    """兼容旧三元组与新四元组 (imgs, clinical, labels[, frame_mask])。"""
+    """兼容三/四/五元组 → imgs, clinical, labels, frame_mask[, group_ids]."""
+    if len(batch) == 5:
+        return batch[0], batch[1], batch[2], batch[3], batch[4]
     if len(batch) == 4:
-        return batch[0], batch[1], batch[2], batch[3]
+        imgs, clinical, labels, frame_mask = batch
+        group_ids = torch.arange(imgs.shape[0], device=imgs.device, dtype=torch.long)
+        return imgs, clinical, labels, frame_mask, group_ids
     if len(batch) == 3:
         imgs, clinical, labels = batch
         b, n = imgs.shape[0], imgs.shape[1]
         mask = torch.ones(b, n, device=imgs.device, dtype=imgs.dtype)
-        return imgs, clinical, labels, mask
+        group_ids = torch.arange(b, device=imgs.device, dtype=torch.long)
+        return imgs, clinical, labels, mask, group_ids
     raise ValueError(f"意外的 batch 长度: {len(batch)}")
 
 

@@ -291,6 +291,10 @@ def main():
     print(
         f" TIFF 时序: EXPAND_TIFF_PAGES={bool(getattr(Config, 'EXPAND_TIFF_PAGES', False))} "
         f"| MAX_PAGES_PER_TIFF={getattr(Config, 'MAX_PAGES_PER_TIFF', 0)} "
+        f"| SITEBAG={bool(getattr(Config, 'SITEBAG_ENABLE', False))} "
+        f"(n={getattr(Config, 'SITEBAG_N', 0)}, "
+        f"eval_agg={getattr(Config, 'SITEBAG_EVAL_AGG', 'max')}, "
+        f"eval_OR={getattr(Config, 'SITEBAG_EVAL_OR', False)}) "
         f"| BATCH_SIZE={Config.BATCH_SIZE}"
     )
     model = OptiGenesis(
@@ -586,6 +590,25 @@ def main():
             f"PR-AUC={ext_metrics_best['auc_pr']:.4f}  "
             f"平衡准确率={ext_metrics_best['balanced_accuracy']:.4f}"
         )
+
+        # site-bag：华西 / 辽宁分开终评
+        if bool(getattr(Config, "SITEBAG_ENABLE", False)):
+            for tag in ("huaxi", "liaoning"):
+                split_csv = os.path.join(Config.DATA_ROOT, f"external_{hospital_name}_{tag}.csv")
+                if not os.path.exists(split_csv):
+                    continue
+                split_loader = get_dataloader(split_csv, mode='val', seed=Config.SEED + 3000)
+                _, m_c = export_split_predictions(
+                    loader=split_loader,
+                    source_csv_path=split_csv,
+                    split_name=f'external_{tag}',
+                    **export_kwargs,
+                )
+                print(
+                    f"【最佳权重 · 外部终评 {tag}】ROC-AUC={m_c['auc_roc']:.4f}  "
+                    f"PR-AUC={m_c['auc_pr']:.4f}  "
+                    f"平衡准确率={m_c['balanced_accuracy']:.4f}"
+                )
     
     # 保存训练历史（保存到logs目录）
     import json
