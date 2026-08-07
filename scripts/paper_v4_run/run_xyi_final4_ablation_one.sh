@@ -1,46 +1,50 @@
 #!/usr/bin/env bash
-# 单卡：② 底座（UW + sitebag n=2×全页 + 多窗 mean + MIL@0.3）上叠稳定性模块
-# METHOD ∈ {ema_aux, ema, aux, wma, ema_wma, ema_aux_wma}
+# 单卡：相对最终④（sitebag n=2×全页 + UW + MIL@0.3 + 多窗 mean + EMA0.99）的消融/对比
 #
-#   CUDA_VISIBLE_DEVICES=0 METHOD=ema_aux SEEDS="42 123 2024 3407 114514" \
-#     ./scripts/paper_v4_run/run_xyi_mean_stab_one.sh
+# METHOD ∈ {
+#   agg_equal   — 消融：FRAME_AGG=equal（有帧 EDL、无不确定加权）
+#   noaux       — 消融：关 FrameAux
+#   broadcast   — 消融：FrameAux MIL → broadcast
+#   eval_first  — 对比：val/test 只取第 1 窗（不扫全圈 6 窗 mean）
+#   page1       — 对比：sitebag 同设定，每点只取首页（证全页有用）
+# }
+#
+#   CUDA_VISIBLE_DEVICES=0 METHOD=agg_equal SEEDS="42 123 2024 3407 114514" \
+#     ./scripts/paper_v4_run/run_xyi_final4_ablation_one.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export PATH="/home/amax/anaconda3/bin:${PATH:-}"
-# 系统盘满时避免写 /tmp
 export TMPDIR="${TMPDIR:-$ROOT/.tmp_run}"
 mkdir -p "$TMPDIR"
 PYTHON="${OPTIGENESIS_PYTHON:-/home/amax/anaconda3/bin/python3}"
 
-METHOD="${METHOD:?设 METHOD=ema_aux|ema|aux|wma|ema_wma|ema_aux_wma}"
+METHOD="${METHOD:?设 METHOD=agg_equal|noaux|broadcast|eval_first|page1}"
 # shellcheck disable=SC2206
 SEEDS=(${SEEDS:-42 123 2024 3407 114514})
 GPU="${CUDA_VISIBLE_DEVICES:-0}"
 MAX_EPOCHS="${OPTIGENESIS_EPOCHS:-30}"
 SKIP_COMPLETED="${SKIP_COMPLETED:-1}"
+BASE2="$ROOT/outputs/paper_v4/baseline2"
 
 case "$METHOD" in
-  ema_aux)
-    OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-$ROOT/outputs/paper_v4/baseline2/xyi_sitebag_n2_uw_mil_aggmean_ema099_aux01}"
+  agg_equal)
+    OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-$BASE2/xyi_sitebag_n2_equal_mil_aggmean_ema099}"
     ;;
-  ema)
-    OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-$ROOT/outputs/paper_v4/baseline2/xyi_sitebag_n2_uw_mil_aggmean_ema099}"
+  noaux)
+    OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-$BASE2/xyi_sitebag_n2_uw_noaux_aggmean_ema099}"
     ;;
-  aux)
-    OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-$ROOT/outputs/paper_v4/baseline2/xyi_sitebag_n2_uw_mil_aggmean_aux01}"
+  broadcast)
+    OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-$BASE2/xyi_sitebag_n2_uw_bcast_aggmean_ema099}"
     ;;
-  wma)
-    OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-$ROOT/outputs/paper_v4/baseline2/xyi_sitebag_n2_uw_mil_aggmean_wmaC01}"
+  eval_first)
+    OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-$BASE2/xyi_sitebag_n2_uw_mil_aggfirst_ema099}"
     ;;
-  ema_wma)
-    OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-$ROOT/outputs/paper_v4/baseline2/xyi_sitebag_n2_uw_mil_aggmean_ema099_wmaC01}"
-    ;;
-  ema_aux_wma)
-    OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-$ROOT/outputs/paper_v4/baseline2/xyi_sitebag_n2_uw_mil_aggmean_ema099_aux01_wmaC01}"
+  page1)
+    OUT_ROOT="${OPTIGENESIS_OUTPUT_DIR:-$BASE2/xyi_sitebag_n2_uw_mil_page1_aggmean_ema099}"
     ;;
   *)
-    echo "未知 METHOD=$METHOD（期望 ema_aux|ema|aux|wma|ema_wma|ema_aux_wma）"; exit 1
+    echo "未知 METHOD=$METHOD"; exit 1
     ;;
 esac
 
@@ -51,8 +55,8 @@ is_run_complete() {
 
 mkdir -p "$OUT_ROOT"
 echo "======================================"
-echo "②+stab | METHOD=$METHOD | GPU=$GPU | seeds=${SEEDS[*]}"
-echo "底座: UW + MIL@0.3 + sitebag n=2 + eval_agg=mean（无 Attn）"
+echo "④ ablation/cmp | METHOD=$METHOD | GPU=$GPU | seeds=${SEEDS[*]}"
+echo "底座: sitebag n=2 + UW + MIL@0.3 + mean + EMA0.99（无 Attn/WMA/Aux）"
 echo "OUT=$OUT_ROOT"
 echo "======================================"
 
@@ -82,7 +86,7 @@ for SEED in "${SEEDS[@]}"; do
   export OPTIGENESIS_USE_CLINICAL=0
   export OPTIGENESIS_LABEL_SMOOTHING=0
 
-  # ② 底座（UW，不是 Attn）
+  # ④ 底座
   export OPTIGENESIS_FRAME_AGG=uncertainty_weighted
   export OPTIGENESIS_FRAME_AGG_TEMP=0.5
   export OPTIGENESIS_FRAME_WEIGHT_SIGNAL=edl_u
@@ -96,48 +100,33 @@ for SEED in "${SEEDS[@]}"; do
   export OPTIGENESIS_SITEBAG_EVAL_OR=1
   export OPTIGENESIS_SITEBAG_EVAL_AGG=mean
   export OPTIGENESIS_EXPAND_TIFF_PAGES=0
+  export OPTIGENESIS_MAX_PAGES_PER_TIFF=0
   export OPTIGENESIS_BATCH_SIZE="${OPTIGENESIS_BATCH_SIZE:-2}"
   export OPTIGENESIS_FRAME_ENCODE_CHUNK="${OPTIGENESIS_FRAME_ENCODE_CHUNK:-16}"
   export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
   export OPTIGENESIS_ENABLE_CORAL=0
-
-  # 默认全关，再按 METHOD 打开
   export OPTIGENESIS_USE_WMA=0
-  export OPTIGENESIS_ENABLE_EMA=0
   export OPTIGENESIS_ENABLE_AUX=0
-  export OPTIGENESIS_FRAME_AUX_USE_WMA=1
-  export OPTIGENESIS_WMA_C="${OPTIGENESIS_WMA_C:-0.1}"
-  export OPTIGENESIS_WMA_WARMUP="${OPTIGENESIS_WMA_WARMUP:-10}"
-  export OPTIGENESIS_WMA_TEMP="${OPTIGENESIS_WMA_TEMP:-1.0}"
+  export OPTIGENESIS_ENABLE_EMA=1
   export OPTIGENESIS_EMA_DECAY="${OPTIGENESIS_EMA_DECAY:-0.99}"
-  export OPTIGENESIS_AUX_W_VISION="${OPTIGENESIS_AUX_W_VISION:-0.1}"
-  export OPTIGENESIS_AUX_W_CLINICAL="${OPTIGENESIS_AUX_W_CLINICAL:-0.1}"
+  export OPTIGENESIS_FRAME_AUX_USE_WMA=0
 
   case "$METHOD" in
-    ema_aux)
-      export OPTIGENESIS_ENABLE_EMA=1
-      export OPTIGENESIS_ENABLE_AUX=1
+    agg_equal)
+      export OPTIGENESIS_FRAME_AGG=equal
       ;;
-    ema)
-      export OPTIGENESIS_ENABLE_EMA=1
+    noaux)
+      export OPTIGENESIS_ENABLE_FRAME_AUX=0
       ;;
-    aux)
-      export OPTIGENESIS_ENABLE_AUX=1
+    broadcast)
+      export OPTIGENESIS_FRAME_AUX_MODE=broadcast
       ;;
-    wma)
-      export OPTIGENESIS_USE_WMA=1
-      export OPTIGENESIS_FRAME_AUX_USE_WMA=1
+    eval_first)
+      export OPTIGENESIS_SITEBAG_EVAL_AGG=first
       ;;
-    ema_wma)
-      export OPTIGENESIS_ENABLE_EMA=1
-      export OPTIGENESIS_USE_WMA=1
-      export OPTIGENESIS_FRAME_AUX_USE_WMA=1
-      ;;
-    ema_aux_wma)
-      export OPTIGENESIS_ENABLE_EMA=1
-      export OPTIGENESIS_ENABLE_AUX=1
-      export OPTIGENESIS_USE_WMA=1
-      export OPTIGENESIS_FRAME_AUX_USE_WMA=1
+    page1)
+      # sitebag 仍 expand，但截断为每 TIFF 仅 1 页 → 证「全页有用」
+      export OPTIGENESIS_MAX_PAGES_PER_TIFF=1
       ;;
   esac
 
