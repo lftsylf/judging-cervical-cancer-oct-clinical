@@ -1,3 +1,5 @@
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,11 +18,14 @@ class OptiGenesis(nn.Module):
     - ``equal``：帧级 EDL → 等权平均 α（消融：有帧不确定、无加权）
     - ``uncertainty_weighted``：帧级 EDL → 按 (1−u) 软加权聚合 α（v4 主方法）
     - ``attention``：帧级 EDL → 可学习注意力加权聚合 α（u 仅导出/复核，不参与加权）
+    - ``abmil``：Ilse gated attention MIL（对比实验）
+    - ``dsmil``：双流 MIL（对比实验）
 
     帧不确定度（EDL）：u = K / S，S = Σα；UW 模式下置信度 (1−u) 越大，聚合权重越高。
+    推理期 UBIX（OPTIGENESIS_UBIX_ENABLE=1 + equal）：MC Dropout 不确定度降权后再池化。
     """
 
-    AGG_MODES = ("mean", "equal", "uncertainty_weighted", "attention")
+    AGG_MODES = ("mean", "equal", "uncertainty_weighted", "attention", "abmil", "dsmil")
     WEIGHT_SIGNALS = ("edl_u", "edl_u_amp", "maxprob", "negent", "topk_p", "max_p_pool")
     ATTN_QUERY_MODES = ("mean", "evidence")
 
@@ -65,6 +70,18 @@ class OptiGenesis(nn.Module):
         self.frame_encode_chunk = int(frame_encode_chunk or 0)
         self.frame_topk_k = max(1, int(frame_topk_k))
 
+        # UBIX / ABMIL / DSMIL 对比开关（环境变量；训练脚本已 export）
+        self.ubix_enable = os.getenv("OPTIGENESIS_UBIX_ENABLE", "0").strip() in ("1", "true", "True")
+        self.ubix_mode = os.getenv("OPTIGENESIS_UBIX_MODE", "soft").strip().lower()
+        self.ubix_mc_t = int(os.getenv("OPTIGENESIS_UBIX_MC_T", "16") or 16)
+        _thr = os.getenv("OPTIGENESIS_UBIX_THRESH", "").strip()
+        self.ubix_thresh = float(_thr) if _thr else None
+        self.abmil_gate = os.getenv("OPTIGENESIS_ABMIL_GATE", "1").strip() not in ("0", "false", "False")
+        self.abmil_attn_dim = int(os.getenv("OPTIGENESIS_ABMIL_ATTN_DIM", "128") or 128)
+        self.dsmil_attn_dim = int(os.getenv("OPTIGENESIS_DSMIL_ATTN_DIM", "128") or 128)
+        self.dsmil_dropout = float(os.getenv("OPTIGENESIS_DSMIL_DROPOUT", "0.25") or 0.25)
+        self.dsmil_fuse = os.getenv("OPTIGENESIS_DSMIL_FUSE", "mean").strip().lower()
+
         # 1. 视觉基座（timm；num_classes=0 去掉分类头，前向得到全局池化后的特征向量）
         print(f"🔍 正在加载视觉 backbone: {model_name}")
         print(
@@ -81,6 +98,7 @@ class OptiGenesis(nn.Module):
                 else ""
             )
             + (f" | topk_k={self.frame_topk_k}" if self.weight_signal == "topk_p" else "")
+            + (f" | UBIX={self.ubix_mode} T={self.ubix_mc_t}" if self.ubix_enable else "")
         )
         self.vision_backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
         self.vision_dim = self.vision_backbone.num_features
@@ -118,6 +136,34 @@ class OptiGenesis(nn.Module):
         else:
             self.frame_attn_q = None
             self.frame_attn_k = None
+
+        # 4c. ABMIL gated attention (Ilse et al.)
+        if self.frame_agg_mode == "abmil":
+            ad = self.abmil_attn_dim
+            self.abmil_v = nn.Linear(256, ad)
+            self.abmil_u = nn.Linear(256, ad) if self.abmil_gate else None
+            self.abmil_w = nn.Linear(ad, 1)
+        else:
+            self.abmil_v = None
+            self.abmil_u = None
+            self.abmil_w = None
+
+        # 4d. DSMIL dual-stream
+        if self.frame_agg_mode == "dsmil":
+            from .cmp_dsmil import DSMILAggregator
+
+            self.dsmil = DSMILAggregator(
+                in_dim=256,
+                num_classes=num_classes,
+                attn_dim=self.dsmil_attn_dim,
+                dropout=self.dsmil_dropout,
+            )
+        else:
+            self.dsmil = None
+
+        # UBIX: extra dropout on fused feats for MC (inference)
+        ubix_p = float(os.getenv("OPTIGENESIS_UBIX_DROPOUT_P", "0.2") or 0.2)
+        self.ubix_dropout = nn.Dropout(ubix_p) if self.ubix_enable else None
 
         # 辅助头：用于单模态辅助监督（低成本多模态改进；仍基于患者级视觉/临床特征）
         self.aux_vision_head = nn.Linear(self.vision_dim, num_classes)
@@ -201,6 +247,42 @@ class OptiGenesis(nn.Module):
                 )
             else:
                 frame_w = mask / mask.sum(dim=1, keepdim=True).clamp_min(1.0)
+        elif self.frame_agg_mode == "abmil":
+            # Ilse gated attention: a_i ∝ exp(w^T (tanh(V h) ⊙ sig(U h)))
+            if self.abmil_v is None or self.abmil_w is None:
+                raise RuntimeError("abmil 模式未初始化 abmil_* 层")
+            h = self.abmil_v(feat_fused)
+            if self.abmil_gate and self.abmil_u is not None:
+                h = torch.tanh(h) * torch.sigmoid(self.abmil_u(feat_fused))
+            else:
+                h = torch.tanh(h)
+            score = self.abmil_w(h).squeeze(-1)  # [B, N]
+            if mask is not None:
+                score = score.masked_fill(mask < 0.5, -1e9)
+            frame_w = F.softmax(score, dim=1)
+            if mask is not None:
+                frame_w = frame_w * mask
+                frame_w = frame_w / frame_w.sum(dim=1, keepdim=True).clamp_min(1e-8)
+        elif self.frame_agg_mode == "dsmil":
+            if self.dsmil is None:
+                raise RuntimeError("dsmil 模式未初始化 DSMILAggregator")
+            frame_w, bag_feat_dsmil, crit_idx = self.dsmil(
+                feat_fused, frame_mask=mask, fuse=self.dsmil_fuse
+            )
+            # 双流：注意力加权 α 与关键实例 α 融合
+            w = frame_w.unsqueeze(-1)
+            alpha_attn = torch.sum(w * alpha_frame, dim=1)
+            alpha_max = alpha_frame[torch.arange(b, device=alpha_frame.device), crit_idx]
+            if self.dsmil_fuse == "max":
+                alpha = alpha_max
+                feat_patient = bag_feat_dsmil
+            elif self.dsmil_fuse == "attn":
+                alpha = alpha_attn
+                feat_patient = bag_feat_dsmil
+            else:
+                alpha = 0.5 * (alpha_max + alpha_attn)
+                feat_patient = bag_feat_dsmil
+            return alpha, feat_patient, frame_u, frame_w
         elif self.frame_agg_mode == "attention":
             # query ← mean(特征) 或 evidence(p+) 加权特征；key = 各帧；softmax 得 w（与 EDL-u 解耦）
             if self.frame_attn_q is None or self.frame_attn_k is None:
@@ -370,20 +452,42 @@ class OptiGenesis(nn.Module):
                     "frame_mask": frame_mask,
                 }
         else:
-            # —— equal / uncertainty_weighted / attention：帧级 EDL 再聚合 ——
+            # —— equal / UW / attention / abmil / dsmil：帧级 EDL 再聚合 ——
             alpha_frame, feat_fused_frames, c_feat, v_feat_patient = self._frame_alphas_and_features(
                 v_feat, clinical, frame_mask=frame_mask
             )
-            alpha, feat_fused, frame_u, frame_w = self._aggregate_frame_alphas(
-                alpha_frame, feat_fused_frames, frame_mask=frame_mask
-            )
+            # UBIX：仅推理期、等权训练底座上，用 MC Dropout 不确定度重加权
+            if (
+                self.ubix_enable
+                and (not self.training)
+                and self.frame_agg_mode == "equal"
+            ):
+                from .cmp_ubix import ubix_reaggregate
+
+                alpha, feat_fused, frame_u, frame_w = ubix_reaggregate(
+                    self,
+                    v_feat,
+                    clinical,
+                    frame_mask,
+                    alpha_frame,
+                    feat_fused_frames,
+                    mode=self.ubix_mode,
+                    mc_t=self.ubix_mc_t,
+                    thresh=self.ubix_thresh,
+                    temperature=self.agg_temperature,
+                )
+            else:
+                alpha, feat_fused, frame_u, frame_w = self._aggregate_frame_alphas(
+                    alpha_frame, feat_fused_frames, frame_mask=frame_mask
+                )
             if return_frame_details:
                 frame_details = {
                     "frame_alpha": alpha_frame,
                     "frame_uncertainty": frame_u,
                     "frame_weights": frame_w,
                     "review_frame_indices": self._review_indices(frame_u, frame_mask),
-                    "agg_mode": self.frame_agg_mode,
+                    "agg_mode": self.frame_agg_mode
+                    + ("+ubix" if self.ubix_enable and not self.training else ""),
                     "frame_mask": frame_mask,
                 }
 

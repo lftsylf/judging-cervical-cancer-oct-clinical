@@ -9,6 +9,26 @@
 
 ---
 
+## 0. 当前选定的实验方法（Ours · 请以此为锚）
+
+**一句话**：在湘雅内训、华西+辽宁外测的 OCT-only 协议下，用「n=2 点位袋 × 全帧 + 帧级 EDL 不确定加权（UWA）+ MIL 辅损 + 六窗平均推理 + EMA0.99」作为最终方法；主报外部 pooled ROC **0.564±0.034**。
+
+| 项 | 选定 |
+|----|------|
+| 目录 | `outputs/paper_v4/baseline2/4[final] xyi_sitebag_n2_uw_mil_aggmean_ema099` |
+| 输入 | site-bag：**每次 2 个钟点 × 该点全部 TIFF 页**（不是 12×首页） |
+| 帧聚合 | `FRAME_AGG=uncertainty_weighted`（UWA），τ=0.5，信号 edl_u |
+| 帧辅损 | FrameAux **MIL@0.3**（edl） |
+| 窗间汇总 | 验证/测试 6 不重叠窗 → **mean**（不是 max） |
+| 稳定 | **仅开 EMA decay=0.99**（不开 Aux 多模态头、不开 WMA 主损失、不开 Attn） |
+| 骨干 | ResNet50；`USE_CLINICAL=0` |
+| 已有对比 | 同协议下 **WMA 损失**（目录 `5[对比]`，Ext 0.549）——仍需再补 1–2 个他人方法 |
+| 主消融 | ③12×首页 baseline；①max 窗；②无 EMA；equal 关 UWA；关 FrameAux |
+
+**对比实验窗口请做的事**：在同一切分/同一指标下接入他人方法（或标准 MIL/不确定度基线），**不要**再拆我们自己的窗数/是否读全页当「对比」；那些是消融，已跑完。
+
+---
+
 ## 1. 任务与数据
 
 | 项 | 内容 |

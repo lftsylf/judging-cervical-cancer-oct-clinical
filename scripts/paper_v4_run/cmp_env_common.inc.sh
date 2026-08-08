@@ -1,0 +1,39 @@
+# shellcheck shell=bash
+# 对比实验 / 骨干变体 · 公共环境（由 run_cmp_*_one.sh source）
+# 协议锁死：湘雅 sitebag 切分 · OCT-only · 5 seeds · 主报 Ext pooled ROC
+#
+# 用法：在各 run_cmp_* 里 source 本文件后，再覆盖方法专用变量。
+
+: "${ROOT:?ROOT 未设置}"
+: "${OUT_ROOT:?OUT_ROOT 未设置}"
+: "${SEED:?SEED 未设置}"
+
+export CUDA_VISIBLE_DEVICES="${GPU:-${CUDA_VISIBLE_DEVICES:-0}}"
+export HOSPITAL_NAME=xyi
+export OPTIGENESIS_OUTPUT_DIR="$OUT_ROOT"
+export OPTIGENESIS_OUTPUT_RUN_NAME="seed_${SEED}"
+export OPTIGENESIS_SEED="$SEED"
+export OPTIGENESIS_EPOCHS="${MAX_EPOCHS:-${OPTIGENESIS_EPOCHS:-30}}"
+export OPTIGENESIS_LR="${OPTIGENESIS_LR:-5e-5}"
+export OPTIGENESIS_POS_WEIGHT="${OPTIGENESIS_POS_WEIGHT:-1.25}"
+export OPTIGENESIS_USE_CLINICAL=0
+export OPTIGENESIS_LABEL_SMOOTHING=0
+
+# —— 数据组织（四实验共用；勿改成「整患者大袋」除非文中声明）——
+export OPTIGENESIS_SITEBAG=1
+export OPTIGENESIS_SITEBAG_N=2
+export OPTIGENESIS_SITEBAG_EVAL_OR=1
+export OPTIGENESIS_SITEBAG_EVAL_AGG=mean
+export OPTIGENESIS_EXPAND_TIFF_PAGES=0
+export OPTIGENESIS_MAX_PAGES_PER_TIFF=0
+export OPTIGENESIS_BATCH_SIZE="${OPTIGENESIS_BATCH_SIZE:-2}"
+export OPTIGENESIS_FRAME_ENCODE_CHUNK="${OPTIGENESIS_FRAME_ENCODE_CHUNK:-16}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
+# —— 稳定性默认：对比方法关 WMA / 多模态 Aux / CORAL；EMA 按方法决定 ——
+export OPTIGENESIS_ENABLE_CORAL=0
+export OPTIGENESIS_USE_WMA=0
+export OPTIGENESIS_ENABLE_AUX=0
+export OPTIGENESIS_FRAME_AUX_USE_WMA=0
+export TMPDIR="${TMPDIR:-$ROOT/.tmp_run}"
+mkdir -p "$TMPDIR"
