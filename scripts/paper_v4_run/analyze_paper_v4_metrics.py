@@ -4,11 +4,14 @@ paper_v4 / baseline2：阈值后处理 + ROC/PR 汇总 + 论文用 Markdown/CSV 
 
 协议：湘雅内训 / 华西+辽宁外测；主报 Ext pooled ROC；阈值相关指标单独解耦。
 
-阈值策略（--threshold-policy）:
-  youden_on_split  — 与 v2 Table1/2 一致：在**当前评估划分**上 per-seed Youden
-                     （Val / Ext / Hx / Ln 各自标定；乐观操作点，文中写清）
-  youden_on_val    — 在湘雅 Val 上标定 t*，应用到各外部划分（更贴近部署）
-  fixed0.5         — 固定 0.5（日志默认；小样本 BA 常不稳）
+阈值策略（--threshold-policy）——二者不同，勿混：
+
+  youden_on_split  — 默认；报哪一划分就在**该划分**上 Youden（Ext→Ext，华西→华西…）
+                     对齐 v2/v3「外部集逐 run Youden」；**不是**湘雅定阈再外推
+  youden_on_val    — 仅在湘雅 Val 标定 t*，再把**同一 t*** 应用到 Ext/华西/辽宁
+  fixed0.5         — 固定 0.5
+
+主表保留 ROC + Sens/Spec/PPV/NPV（Word 宽度决定粘多少列）。
 
 用法:
   export PATH="/home/amax/anaconda3/bin:$PATH"
@@ -348,8 +351,10 @@ def write_paper_md(
         "> 协议：湘雅内训 · 华西+辽宁外测 · OCT-only · 5 seeds（42/123/2024/3407/114514）。",
         "> **主指标：Ext pooled ROC-AUC（已锁定）**。勿与旧 LOHO / Attn 数字横比。",
         f"> 阈值策略：`{threshold_policy}`（与 v2/v3 共用 `youden_threshold_utils.py`："
-        "Youden 主目标，平局 F1 → |t−患病率|；仅影响 Sens/Spec/PPV/NPV/Youden；**AUC/PR 不依赖阈值**）。",
-        "> **草稿声明**：操作点列（Sens/Spec/…）算法已对齐 v3，但**论文表最终指标集合尚未由作者定稿**。",
+        "Youden→F1→|t−患病率|；仅影响 Sens/Spec/PPV/NPV；**AUC/PR 不依赖阈值**）。",
+        "> **策略含义**：`youden_on_split`=报哪一划分就在该划分上找 t*（Ext≠湘雅定阈）；"
+        "`youden_on_val`=湘雅 Val 找 t* 再套外测。详见 `README_POSTPROCESS_TABLES.md`。",
+        "> 主表保留 ROC + Sens/Spec/PPV/NPV；往 Word 粘多少列由版面决定。",
         "> 华西/辽宁来自分中心预测 CSV，非 pooled 切片。",
         "> 生成：`python scripts/paper_v4_run/analyze_paper_v4_metrics.py`",
         "",

@@ -4,7 +4,7 @@
 |------|------|
 | `baseline2和消融/` | **当前有效**：Ours + 主消融 |
 | `对比实验/` | **当前有效**：ABMIL / UBIX / DSMIL / WMA / ConvNeXt 变体 |
-| `tables/` | 自动汇总表（ROC 锁定；阈值相关列为草稿） |
+| `tables/` | 自动汇总表（ROC + Sens/Spec/PPV/NPV；阈值策略见后处理 README） |
 | `useless_旧baseline_LOHO_Attn/` | **禁止使用**（原 `baseline/`，旧 LOHO/Attn） |
 
 说明文档入口：`scripts/paper_v4_run/GEMINI_REPO_GUIDE_for_paper_v4.md`  

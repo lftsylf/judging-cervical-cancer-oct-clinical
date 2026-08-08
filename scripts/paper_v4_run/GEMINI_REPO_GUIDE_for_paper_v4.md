@@ -7,14 +7,14 @@
 
 ## --- 复制起点 ---
 
-你是论文写作与插图顾问。仓库是 **OptiGenesis / 宫颈 OCT 患者级筛查** 的 `feature/paper-v4` 分支。请先读文档再改论文表述或出框架图提示词；**不要编造数字**，数值以指定简报与表为准。
+你是顶刊论文写作与插图顾问。仓库是 **OptiGenesis / 宫颈 OCT 患者级筛查** 的 `feature/paper-v4` 分支。请先读文档再改论文表述或出框架图提示词；**不要编造数字**，数值以指定简报与表为准。
 
 ### A. 必读顺序（按此打开）
 
 1. `scripts/paper_v4_run/PAPER_EXPERIMENT_BRIEF_for_Gemini.md` **§0 + §2 + §3** — 方法锚与实验表  
 2. `scripts/paper_v4_run/HANDOFF_SESSION_2026-08-08_对比与消融.md` — 最新对比/消融结论  
 3. `scripts/paper_v4_run/MODEL_FRAMEWORK_SPEC_for_Gemini.md` — **框架图硬规格**（画图必遵）  
-4. `outputs/paper_v4/tables/PAPER_TABLES_baseline2.md` — 自动汇总表（**主指标 ROC 已锁定**；Sens/Spec 等阈值相关列为 Youden 解耦草稿，表头指标集合**尚未由作者最终定稿**，改表前先问我）  
+4. `outputs/paper_v4/tables/PAPER_TABLES_baseline2.md` — 自动汇总表（ROC + Sens/Spec/PPV/NPV 均保留；往 Word 粘多少列由版面决定）  
 5. 需要细节时再看：`README_POSTPROCESS_TABLES.md`、`CMP_BASELINE2_LAUNCH.md`
 
 ### B. 协议与 Ours（写死，勿改）
@@ -54,30 +54,34 @@ data/snapshots/paper_v4_xyi_sitebag/  # 切分快照
 
 1. **UWA = 窗内帧加权**；**Mean = 窗间平均** —— 两层，勿混。  
 2. **EMA** 是参数平滑，不是图像处理支路。  
-3. **AUC/PR 不依赖单一阈值**；硬分类阈值需另说明（本仓库默认与 v2/v3 相同：评估集上 Youden，平局 F1→|t−患病率|）。  
+3. **AUC/PR 不依赖单一阈值**；硬分类阈值需另说明。  
+   - **`youden_on_split`（默认，对齐 v2/v3）**：报 Ext 就在 Ext 上找 t\*，报华西就在华西上找 t\*——**不是**湘雅定阈。  
+   - **`youden_on_val`**：湘雅 Val 找 t\* → **同一 t\*** 套到 Ext/华西/辽宁（部署叙事）。  
+   二者不同；勿混写。平局规则：Youden → F1 → |t−患病率|。  
 4. 不要把「换窗数 / 是否读全页」写成对比实验——那是消融。  
 5. 对比 = 他人方法（ABMIL/DSMIL/UBIX）或换损失（WMA），同一切分同指标。
 
 ### F. 你要帮我做的事（按我当次消息）
 
 - **改中文论文**：方法 / 实验设置 / 主结果 / 消融 / 讨论；数字只引用 BRIEF / HANDOFF / `PAPER_TABLES_*.md`。  
-- **框架图**：严格按 `MODEL_FRAMEWORK_SPEC_for_Gemini.md` 出 nano-banana 提示词；禁止画 Attn/WMA/临床融合。  
-- **表格文案**：主文建议行 = Baseline / ABMIL / DSMIL / UBIX / WMA / Ours；消融 leave-one-out；ConvNeXt 附录。  
+- **框架图**：可以参考 `MODEL_FRAMEWORK_SPEC_for_Gemini.md` 出 nano-banana 提示词，不过还需要你根据我给你的参考模型框架图润色优化一下；禁止画 Attn/WMA/临床融合。  
+- **表格文案**：主文建议行 = Baseline / ABMIL / DSMIL / UBIX / WMA / Ours；消融 leave-one-out。  
 - **不要**：建议再刷骨干动物园、再开 2⁴ 消融、引入废弃 baseline 数字。
 
-### G. 后处理与阈值（若谈表注）
+### G. 后处理与阈值（写表注必读）
 
-与仓库 v2/v3 共用 `scripts/youden_threshold_utils.py`：
+与仓库 v2/v3 共用 `scripts/youden_threshold_utils.py`（Youden → F1 → |t−患病率|）。
 
-- 候选阈值 = 预测分中点等；约束 Sens>0 且 Spec>0；  
-- 主目标 **Youden = Sens+Spec−1**；平局 **F1** → **|t−患病率|**；  
-- 默认策略：在**当前评估划分**上 per-seed 标定（Ext pooled / 华西 / 辽宁各自）；  
-- 备选：在湘雅 Val 标定再应用到外测（`youden_on_val`）。  
-- **表里最终放哪些阈值相关列，以我确认为准**；未确认前以 ROC（及可选 PR）为主。
+**两种策略不是一回事：**
 
-华西/辽宁分中心指标必须来自  
-`seed_*/logs/external_{huaxi,liaoning}_sample_predictions.csv`，  
-不要从 pooled `external_sample_predictions.csv` 按 center 切片（标签/概率可能不一致）。
+| 策略 | t\* 在哪标定 | 用到哪 |
+|------|--------------|--------|
+| `youden_on_split`（默认） | **正在报告的那一划分**（Ext→Ext；华西→华西；辽宁→辽宁） | 同一划分（乐观操作点；对齐旧 Table1/2 思路） |
+| `youden_on_val` | **仅湘雅 Val** | 同一 t\* 应用到 Ext/华西/辽宁（部署叙事） |
+
+- 主表保留 **ROC + Sens/Spec/PPV/NPV**；作者按 Word 宽度决定粘多少列。  
+- 详解见 `README_POSTPROCESS_TABLES.md`。  
+- 华西/辽宁必须读 `external_{huaxi,liaoning}_sample_predictions.csv`，勿从 pooled 按 center 切片。
 
 ### H. 代码入口（需要理解实现时）
 

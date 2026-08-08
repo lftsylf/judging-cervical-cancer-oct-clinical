@@ -92,7 +92,9 @@
 - 预测：`…/seed_*/logs/{val,external,external_huaxi,external_liaoning}_sample_predictions.csv`  
   （华西/辽宁 **必须**用分中心文件，勿从 pooled 按 center 切片）  
 - 控制台指标行：`【最佳权重 · 内部验证 val】` / `外部终评 external`  
-- **阈值 + 表 + 图**：见 `README_POSTPROCESS_TABLES.md`（算法对齐 v2/v3 Youden；**表列待作者定稿**）  
+- **阈值 + 表 + 图**：见 `README_POSTPROCESS_TABLES.md`  
+  - `youden_on_split` ≠ `youden_on_val`（前者在外测自己定阈；后者湘雅 Val→外测）  
+  - 主表保留 ROC + Sens/Spec/PPV/NPV；Word 宽度决定粘列数  
   ```bash
   python scripts/paper_v4_run/analyze_paper_v4_metrics.py
   python scripts/paper_v4_run/plot_paper_v4_roc_pr.py --which comparison

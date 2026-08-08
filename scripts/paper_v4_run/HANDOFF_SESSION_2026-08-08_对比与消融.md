@@ -144,4 +144,4 @@ figures/paper_v4/      # ROC/PR 图（若已生成）
 - Seeds：42, 123, 2024, 3407, 114514  
 - 骨干对比方法 = ResNet50；Ours 变体曾试 ConvNeXt（已否决）  
 - UBIX：推理期 MC Dropout，**禁止**接 EDL-u  
-- 主报 Ext pooled ROC；Sens/Spec 等依赖阈值策略（见后处理 README）
+- 主报 Ext pooled ROC；Sens/Spec/PPV/NPV 默认 `youden_on_split`（外测自定阈，≠ Val→外测）；见 `README_POSTPROCESS_TABLES.md`

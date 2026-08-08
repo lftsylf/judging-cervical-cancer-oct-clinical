@@ -6,7 +6,7 @@
 > **废弃目录**：`outputs/paper_v4/useless_旧baseline_LOHO_Attn/`（原 `baseline/`）— **不要读、不要横比**。  
 > 指标均为 **5 个随机种子**（42, 123, 2024, 3407, 114514）的 mean±std。  
 > 主指标：外部测试集 **pooled ROC-AUC**（华西+辽宁合并）；同时报华西、辽宁、内部验证。  
-> Val BA / 部分 Ext BA 在阈值 0.5 下计算，小样本上可能不稳定，**主文以 ROC 为主**。  
+> 硬分类指标（Sens/Spec/PPV/NPV）默认 **`youden_on_split`**：报哪一划分就在该划分上 Youden（与 v2/v3 同思路；**不是**湘雅定阈再外推）。部署叙事可用 `youden_on_val`（Val→外测）。  
 > 给 Gemini 的仓库阅读提示：`scripts/paper_v4_run/GEMINI_REPO_GUIDE_for_paper_v4.md`。
 
 ---

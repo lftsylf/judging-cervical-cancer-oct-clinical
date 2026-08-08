@@ -2,8 +2,9 @@
 
 > 协议：湘雅内训 · 华西+辽宁外测 · OCT-only · 5 seeds（42/123/2024/3407/114514）。
 > **主指标：Ext pooled ROC-AUC（已锁定）**。勿与旧 LOHO / Attn 数字横比。
-> 阈值策略：`youden_on_val`（与 v2/v3 共用 `youden_threshold_utils.py`：Youden 主目标，平局 F1 → |t−患病率|；仅影响 Sens/Spec/PPV/NPV/Youden；**AUC/PR 不依赖阈值**）。
-> **草稿声明**：操作点列（Sens/Spec/…）算法已对齐 v3，但**论文表最终指标集合尚未由作者定稿**。
+> 阈值策略：`youden_on_val`（与 v2/v3 共用 `youden_threshold_utils.py`：Youden→F1→|t−患病率|；仅影响 Sens/Spec/PPV/NPV；**AUC/PR 不依赖阈值**）。
+> **策略含义**：`youden_on_split`=报哪一划分就在该划分上找 t*（Ext≠湘雅定阈）；`youden_on_val`=湘雅 Val 找 t* 再套外测。详见 `README_POSTPROCESS_TABLES.md`。
+> 主表保留 ROC + Sens/Spec/PPV/NPV；往 Word 粘多少列由版面决定。
 > 华西/辽宁来自分中心预测 CSV，非 pooled 切片。
 > 生成：`python scripts/paper_v4_run/analyze_paper_v4_metrics.py`
 
