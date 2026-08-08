@@ -77,6 +77,16 @@ python scripts/paper_v4_run/plot_paper_v4_roc_pr.py --which ablation
 
 注册表：`paper_v4_registry.py`。
 
-## 写进 Word 时
+## ECE / Brier（回应审稿人校准意见）
 
-全指标已在 md/csv；按版面裁列即可。表注须写明用的是 `youden_on_split` 还是 `youden_on_val`。
+```bash
+python scripts/paper_v4_run/analyze_paper_v4_ece_brier.py
+```
+
+| 产物 | 说明 |
+|------|------|
+| `tables/PAPER_ECE_BRIER_baseline2.md` | 主对比 ECE/Brier 表（华西/辽宁/Ext） |
+| `figures/paper_v4/fig_reliability_huaxi_liaoning.*` | Ours 华西+辽宁可靠性图 |
+| `figures/paper_v4/fig_ece_brier_bars.*` | Ext pooled 柱状对比 |
+
+只含外测中心；**湘雅不进该图主面板**。不重训。

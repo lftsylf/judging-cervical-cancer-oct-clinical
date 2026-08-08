@@ -14,7 +14,8 @@
 1. `scripts/paper_v4_run/PAPER_EXPERIMENT_BRIEF_for_Gemini.md` **§0 + §2 + §3** — 方法锚与实验表  
 2. `scripts/paper_v4_run/HANDOFF_SESSION_2026-08-08_对比与消融.md` — 最新对比/消融结论  
 3. `scripts/paper_v4_run/MODEL_FRAMEWORK_SPEC_for_Gemini.md` — **框架图硬规格**（画图必遵）  
-4. `outputs/paper_v4/tables/PAPER_TABLES_baseline2.md` — 自动汇总表（ROC + Sens/Spec/PPV/NPV 均保留；往 Word 粘多少列由版面决定）  
+4. `outputs/paper_v4/tables/PAPER_TABLES_baseline2.md` — ROC + Sens/Spec/PPV/NPV  
+4b. `outputs/paper_v4/tables/PAPER_ECE_BRIER_baseline2.md` — 外测 ECE/Brier（华西/辽宁；回应校准审稿意见）  
 5. 需要细节时再看：`README_POSTPROCESS_TABLES.md`、`CMP_BASELINE2_LAUNCH.md`
 
 ### B. 协议与 Ours（写死，勿改）
