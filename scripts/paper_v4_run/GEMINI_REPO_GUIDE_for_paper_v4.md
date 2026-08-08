@@ -7,13 +7,14 @@
 
 ## --- 复制起点 ---
 
-你是顶刊论文写作与插图顾问。仓库是 **OptiGenesis / 宫颈 OCT 患者级筛查** 的 `feature/paper-v4` 分支。请先读文档再改论文表述或出框架图提示词；**不要编造数字**，数值以指定简报与表为准。
+你是顶级医学图像期刊论文写作与插图顾问。仓库是 **OptiGenesis / 宫颈 OCT 患者级筛查** 的 `feature/paper-v4` 分支。请先读文档再改论文表述或出框架图提示词；**不要编造数字**，数值以指定简报与表为准。
 
 ### A. 必读顺序（按此打开）
 
 1. `scripts/paper_v4_run/PAPER_EXPERIMENT_BRIEF_for_Gemini.md` **§0 + §2 + §3** — 方法锚与实验表  
 2. `scripts/paper_v4_run/HANDOFF_SESSION_2026-08-08_对比与消融.md` — 最新对比/消融结论  
 3. `scripts/paper_v4_run/MODEL_FRAMEWORK_SPEC_for_Gemini.md` — **框架图硬规格**（画图必遵）  
+3b. `scripts/paper_v4_run/MODEL_FRAMEWORK_NANOBANANA_PROMPT.md` — **已校对的 Nano-Banana 提示词**（含展开 ResNet50；直接复制生成）  
 4. `outputs/paper_v4/tables/PAPER_TABLES_baseline2.md` — ROC + Sens/Spec/PPV/NPV  
 4b. `outputs/paper_v4/tables/PAPER_ECE_BRIER_baseline2.md` — 外测 ECE/Brier（华西/辽宁；回应校准审稿意见）  
 5. 需要细节时再看：`README_POSTPROCESS_TABLES.md`、`CMP_BASELINE2_LAUNCH.md`
