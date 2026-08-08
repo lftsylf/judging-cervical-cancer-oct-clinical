@@ -90,14 +90,16 @@
 ## 5. 后处理 / 出表时常用路径
 
 - 预测：`…/seed_*/logs/{val,external,external_huaxi,external_liaoning}_sample_predictions.csv`  
+  （华西/辽宁 **必须**用分中心文件，勿从 pooled 按 center 切片）  
 - 控制台指标行：`【最佳权重 · 内部验证 val】` / `外部终评 external`  
-- **阈值 + 表 + 图（本仓库已接好）**：见 `scripts/paper_v4_run/README_POSTPROCESS_TABLES.md`  
+- **阈值 + 表 + 图**：见 `README_POSTPROCESS_TABLES.md`（算法对齐 v2/v3 Youden；**表列待作者定稿**）  
   ```bash
   python scripts/paper_v4_run/analyze_paper_v4_metrics.py
   python scripts/paper_v4_run/plot_paper_v4_roc_pr.py --which comparison
   ```
-  产物：`outputs/paper_v4/tables/`、`figures/paper_v4/`  
-- 注册表改方法行：`scripts/paper_v4_run/paper_v4_registry.py`（对比实验更新后改路径并重跑即可）
+- Gemini 上传仓库提示词：`GEMINI_REPO_GUIDE_for_paper_v4.md`  
+- 注册表：`paper_v4_registry.py`  
+- **废弃**：`outputs/paper_v4/useless_旧baseline_LOHO_Attn/`（原 `baseline/`）
 
 ---
 
